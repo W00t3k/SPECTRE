@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>⚡ SSID Visualizer — WiFi Radar</title>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+:root{
+  --bg:#05050f;--panel:#080d1a;--border:#0e1f30;
+  --cyan:#00ffc8;--magenta:#ff0096;--yellow:#ffe000;
+  --green:#00ff88;--red:#ff4444;--blue:#3399ff;
+  --text:#b4c8dc;--dim:#3a4a5a;--white:#e8f0ff;
+  --font:'Courier New',Courier,monospace;
+}
+html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--font);}
+body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.08) 2px,rgba(0,0,0,.08) 4px);}
+
+#root{display:flex;flex-direction:column;width:100vw;height:100vh;}
+#topbar{flex:0 0 54px;background:var(--panel);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 14px;gap:10px;
+  box-shadow:0 2px 20px rgba(0,255,200,.07);}
+#title{font-size:1.1rem;font-weight:bold;letter-spacing:.12em;color:var(--cyan);
+  text-shadow:0 0 14px var(--cyan);white-space:nowrap;}
+.badge{font-size:.62rem;padding:3px 7px;border-radius:3px;border:1px solid;letter-spacing:.06em;white-space:nowrap;}
+.badge-green{color:var(--green);border-color:var(--green);background:rgba(0,255,136,.07);box-shadow:0 0 8px rgba(0,255,136,.2);}
+.badge-cyan{color:var(--cyan);border-color:var(--cyan);background:rgba(0,255,200,.07);box-shadow:0 0 8px rgba(0,255,200,.2);}
+.badge-mag{color:var(--magenta);border-color:var(--magenta);background:rgba(255,0,150,.07);}
+.badge-dim{color:var(--dim);border-color:var(--dim);}
+.badge-red{color:var(--red);border-color:var(--red);background:rgba(255,68,68,.1);
+  animation:apulse 1s ease-in-out infinite;}
+@keyframes apulse{0%,100%{box-shadow:0 0 6px rgba(255,68,68,.3);}50%{box-shadow:0 0 16px rgba(255,68,68,.8);}}
+#spacer{flex:1;}
+.topbtn{background:transparent;border:1px solid var(--cyan);color:var(--cyan);
+  font-family:var(--font);font-size:.62rem;padding:3px 9px;border-radius:3px;cursor:pointer;
+  letter-spacing:.06em;transition:background .2s;}
+.topbtn:hover{background:rgba(0,255,200,.1);}
+
+#content{flex:1;display:grid;overflow:hidden;
+  grid-template-columns:390px 1fr 190px;
+  grid-template-rows:1fr 175px;
+  gap:5px;padding:5px;}
+
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:4px;
+  display:flex;flex-direction:column;overflow:hidden;
+  box-shadow:inset 0 0 40px rgba(0,0,0,.5),0 0 2px var(--border);}
+.panel-title{font-size:.68rem;letter-spacing:.12em;color:var(--cyan);
+  padding:6px 10px 5px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:7px;flex-shrink:0;}
+.panel-title .dot{width:7px;height:7px;border-radius:50%;background:var(--cyan);
+  box-shadow:0 0 8px var(--cyan);animation:pulse 1.6s ease-in-out infinite;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+
+#radar-panel{grid-row:1;grid-column:1;}
+#radar-canvas{flex:1;width:100%;display:block;cursor:crosshair;}
+
+#table-panel{grid-row:1;grid-column:2;overflow:hidden;}
+#table-wrap{flex:1;overflow-y:auto;overflow-x:hidden;}
+#table-wrap::-webkit-scrollbar{width:4px;}
+#table-wrap::-webkit-scrollbar-track{background:var(--bg);}
+#table-wrap::-webkit-scrollbar-thumb{background:var(--dim);border-radius:3px;}
+table{width:100%;border-collapse:collapse;font-size:.7rem;}
+thead tr{background:rgba(0,255,200,.04);position:sticky;top:0;z-index:1;}
+th{padding:6px 7px;text-align:left;color:var(--cyan);letter-spacing:.07em;font-size:.62rem;
+  border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none;}
+th:hover{color:var(--white);}
+td{padding:4px 7px;border-bottom:1px solid rgba(14,31,48,.8);white-space:nowrap;}
+tr{cursor:pointer;}
+tr:hover td{background:rgba(0,255,200,.05);}
+tr.selected td{background:rgba(0,255,200,.09);border-left:2px solid var(--cyan);}
+.new-row td{animation:rowflash .7s ease-out;}
+@keyframes rowflash{from{background:rgba(0,255,200,.22);}to{background:transparent;}}
+.sig-bar{display:inline-block;width:8px;border-radius:1px;margin-right:1px;vertical-align:bottom;}
+.rssi-strong{color:var(--green);} .rssi-medium{color:var(--yellow);} .rssi-weak{color:var(--red);}
+.sec-open{color:var(--magenta);font-weight:bold;} .sec-wpa3{color:var(--cyan);} .sec-wpa2{color:var(--text);}
+.hidden-ssid{color:var(--dim);font-style:italic;}
+.band-24{color:var(--cyan);} .band-5{color:var(--magenta);}
+.threat-icon{color:var(--magenta);margin-left:3px;font-size:.8em;}
+
+#log-panel{grid-row:1;grid-column:3;}
+#log-list{flex:1;overflow-y:auto;padding:3px 0;}
+#log-list::-webkit-scrollbar{width:3px;}
+#log-list::-webkit-scrollbar-thumb{background:var(--dim);}
+.log-entry{font-size:.58rem;padding:2px 7px;border-bottom:1px solid rgba(14,31,48,.4);display:flex;gap:5px;align-items:flex-start;}
+.log-ts{color:var(--dim);flex-shrink:0;}
+.log-NEW{color:var(--green);} .log-LOST{color:var(--red);} .log-WEAK{color:var(--yellow);}
+.log-OPEN{color:var(--magenta);} .log-INFO{color:var(--cyan);}
+
+#signal-panel{grid-row:2;grid-column:1;}
+#channel-panel{grid-row:2;grid-column:2;}
+#stats-panel{grid-row:2;grid-column:3;}
+#signal-canvas,#channel-canvas{flex:1;display:block;width:100%;}
+#stats-inner{flex:1;display:flex;flex-direction:column;justify-content:space-evenly;padding:5px 10px;}
+.stat-row{display:flex;justify-content:space-between;align-items:center;font-size:.65rem;}
+.stat-label{color:var(--dim);}
+.stat-val{font-weight:bold;font-size:.78rem;}
+
+/* Modal */
+#modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:1000;align-items:center;justify-content:center;}
+#modal-overlay.open{display:flex;}
+#modal{background:#080d1a;border:1px solid var(--cyan);border-radius:6px;
+  box-shadow:0 0 40px rgba(0,255,200,.3);padding:22px 26px;min-width:320px;max-width:460px;position:relative;}
+#modal h2{color:var(--cyan);font-size:.95rem;letter-spacing:.1em;margin-bottom:12px;padding-right:30px;}
+#modal-close{position:absolute;top:10px;right:12px;background:none;border:none;color:var(--dim);
+  font-size:1rem;cursor:pointer;font-family:var(--font);}
+#modal-close:hover{color:var(--white);}
+.modal-row{display:flex;justify-content:space-between;padding:4px 0;
+  border-bottom:1px solid var(--border);font-size:.74rem;}
+.modal-key{color:var(--dim);} .modal-val{color:var(--white);text-align:right;}
+#modal-spark{margin-top:12px;}
+#modal-spark-label{font-size:.58rem;color:var(--dim);margin-bottom:3px;}
+#modal-spark-canvas{width:100%;height:46px;display:block;}
+#modal-threat{margin-top:10px;color:var(--magenta);font-size:.68rem;letter-spacing:.06em;
+  padding:5px 8px;border:1px solid var(--magenta);border-radius:3px;
+  background:rgba(255,0,150,.07);display:none;}
+
+#bg-canvas{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.2;}
+#root{position:relative;z-index:1;}
+</style>
+</head>
+<body>
+<canvas id="bg-canvas"></canvas>
+
+<div id="root">
+  <div id="topbar">
+    <div id="title">⚡ SSID VISUALIZER</div>
+    <div class="badge badge-green" id="status-badge">● CONNECTING…</div>
+    <div class="badge badge-cyan"  id="count-badge">NETS: 0</div>
+    <div class="badge badge-red"   id="open-badge" style="display:none">⚠ OPEN: 0</div>
+    <div class="badge badge-mag"   id="mode-badge">MODE: INIT</div>
+    <div class="badge badge-dim"   id="strong-badge">BEST: —</div>
+    <div id="spacer"></div>
+    <button class="topbtn" onclick="manualScan()">↻ SCAN</button>
+    <button class="topbtn" onclick="togglePause()" id="pause-btn">⏸ PAUSE</button>
+    <div id="clock" class="badge badge-dim">--:--:--</div>
+  </div>
+
+  <div id="content">
+    <!-- Radar -->
+    <div class="panel" id="radar-panel">
+      <div class="panel-title"><div class="dot"></div>RADAR SWEEP</div>
+      <canvas id="radar-canvas"></canvas>
+    </div>
+
+    <!-- Table -->
+    <div class="panel" id="table-panel">
+      <div class="panel-title">
+        <div class="dot"></div>LIVE NETWORK FEED
+        <span style="margin-left:auto;font-size:.58rem;color:var(--dim);">click to inspect</span>
+      </div>
+      <div id="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th onclick="sortBy('ssid')">SSID ⇅</th>
+              <th>VENDOR</th>
+              <th onclick="sortBy('rssi')">RSSI ⇅</th>
+              <th>SIG</th>
+              <th>TREND</th>
+              <th onclick="sortBy('channel')">CH ⇅</th>
+              <th>BAND</th>
+              <th onclick="sortBy('security')">SEC ⇅</th>
+            </tr>
+          </thead>
+          <tbody id="net-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Event log -->
+    <div class="panel" id="log-panel">
+      <div class="panel-title">
+        <div class="dot" style="background:var(--yellow);box-shadow:0 0 8px var(--yellow);"></div>EVENT LOG
+      </div>
+      <div id="log-list"></div>
+    </div>
+
+    <!-- Signal bars -->
+    <div class="panel" id="signal-panel">
+      <div class="panel-title"><div class="dot" style="background:var(--green);box-shadow:0 0 8px var(--green);"></div>SIGNAL STRENGTH</div>
+      <canvas id="signal-canvas"></canvas>
+    </div>
+
+    <!-- Channel map -->
+    <div class="panel" id="channel-panel">
+      <div class="panel-title"><div class="dot" style="background:var(--magenta);box-shadow:0 0 8px var(--magenta);"></div>CHANNEL MAP</div>
+      <canvas id="channel-canvas"></canvas>
+    </div>
+
+    <!-- Stats -->
+    <div class="panel" id="stats-panel">
+      <div class="panel-title"><div class="dot" style="background:var(--blue);box-shadow:0 0 8px var(--blue);"></div>STATS</div>
+      <div id="stats-inner">
+        <div class="stat-row"><span class="stat-label">TOTAL</span><span class="stat-val" id="st-total" style="color:var(--cyan)">0</span></div>
+        <div class="stat-row"><span class="stat-label">2.4GHz</span><span class="stat-val" id="st-24" style="color:var(--cyan)">0</span></div>
+        <div class="stat-row"><span class="stat-label">5GHz</span><span class="stat-val" id="st-5" style="color:var(--magenta)">0</span></div>
+        <div class="stat-row"><span class="stat-label">OPEN</span><span class="stat-val" id="st-open" style="color:var(--magenta)">0</span></div>
+        <div class="stat-row"><span class="stat-label">WPA3</span><span class="stat-val" id="st-wpa3" style="color:var(--cyan)">0</span></div>
+        <div class="stat-row"><span class="stat-label">HIDDEN</span><span class="stat-val" id="st-hidden" style="color:var(--dim)">0</span></div>
+        <div class="stat-row"><span class="stat-label">BEST dBm</span><span class="stat-val" id="st-best" style="color:var(--green)">—</span></div>
+        <div class="stat-row"><span class="stat-label">WORST dBm</span><span class="stat-val" id="st-worst" style="color:var(--red)">—</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Inspect modal -->
+<div id="modal-overlay" onclick="closeModal(event)">
+  <div id="modal">
+    <button id="modal-close" onclick="closeModal()">✕</button>
+    <h2 id="modal-title">NETWORK DETAILS</h2>
+    <div id="modal-body"></div>
+    <div id="modal-spark">
+      <div id="modal-spark-label">RSSI HISTORY (20 samples)</div>
+      <canvas id="modal-spark-canvas" height="46"></canvas>
+    </div>
+    <div id="modal-threat">⚠ OPEN NETWORK — NO ENCRYPTION</div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════
+// OUI VENDOR TABLE (offline, top vendors)
+// ═══════════════════════════════════════════════════════════════════════
+const OUI = {
+  '00:50:f2':'Microsoft','ac:de:48':'Apple','f4:f5:d8':'Apple','a4:c3:f0':'Apple',
+  '00:1b:63':'Apple','00:25:00':'Apple','00:26:bb':'Apple','00:17:f2':'Apple',
+  'b8:27:eb':'Raspberry Pi','dc:a6:32':'Raspberry Pi','e4:5f:01':'Raspberry Pi',
+  '00:50:56':'VMware','00:0c:29':'VMware',
+  '00:1f:33':'Netgear','20:4e:7f':'Netgear','a0:40:a0':'Netgear',
+  'c4:04:15':'Linksys','00:14:bf':'Linksys','00:18:39':'Linksys',
+  '00:23:69':'Cisco','00:1b:d5':'Cisco','c8:d7:19':'Cisco',
+  '00:26:5a':'TP-Link','50:c7:bf':'TP-Link','74:da:38':'TP-Link',
+  'ec:08:6b':'TP-Link','54:af:97':'TP-Link',
+  '00:1d:7e':'Asus','04:d4:c4':'Asus','ac:22:0b':'Asus','f8:32:e4':'Asus',
+  '00:08:22':'Zyxel','00:13:49':'Zyxel',
+  '00:18:e7':'Belkin','94:10:3e':'Belkin','00:30:bd':'Belkin',
+  '00:1a:70':'Ubiquiti','04:18:d6':'Ubiquiti','24:a4:3c':'Ubiquiti',
+  '78:8a:20':'Ubiquiti','fc:ec:da':'Ubiquiti',
+  '00:23:6c':'Aruba','94:b4:0f':'Aruba',
+  '00:21:70':'Intel','8c:ec:4b':'Intel','a4:34:d9':'Intel',
+  '00:e0:4c':'Realtek','00:90:f5':'Realtek',
+};
+function vendorFromBssid(b){
+  const lo=b.toLowerCase();
+  return OUI[lo.slice(0,11)]||OUI[lo.slice(0,8)]||'Unknown';
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════════════════════════════════
+const $=id=>document.getElementById(id);
+function rssiColor(r){const n=norm(r);return n>.6?'#00ff88':n>.3?'#ffe000':'#ff4444';}
+function norm(r){return Math.max(0,Math.min(1,(r+90)/60));}
+function bars(r,m=5){return Math.max(1,Math.round(norm(r)*m));}
+function band(ch){return parseInt(ch)>14?'5GHz':'2.4GHz';}
+function elapsed(ts){const s=Math.round(Date.now()/1000-ts);if(s<5)return'now';if(s<60)return s+'s';return Math.floor(s/60)+'m';}
+function esc(s){const d=document.createElement('div');d.textContent=String(s??'');return d.innerHTML;}
+function fmtTime(){return new Date().toTimeString().slice(0,8);}
+
+// ═══════════════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════════════
+let networks={}, radarAngle=0, paused=false, sortKey='rssi', selectedBssid=null;
+const rssiHistory={};   // bssid -> number[]
+const ripples=[];       // {bx,by,r,alpha,col}
+
+function pushHistory(bssid,rssi){
+  if(!rssiHistory[bssid]) rssiHistory[bssid]=[];
+  rssiHistory[bssid].push(rssi);
+  if(rssiHistory[bssid].length>20) rssiHistory[bssid].shift();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// EVENT LOG
+// ═══════════════════════════════════════════════════════════════════════
+function logEvent(type,msg){
+  const el=$('log-list');
+  const div=document.createElement('div');
+  div.className='log-entry';
+  div.innerHTML=`<span class="log-ts">${fmtTime()}</span><span class="log-${type}">[${type}]</span><span>${esc(msg)}</span>`;
+  el.prepend(div);
+  while(el.children.length>80) el.removeChild(el.lastChild);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SOCKET
+// ═══════════════════════════════════════════════════════════════════════
+const socket=io();
+socket.on('connect',()=>{
+  $('status-badge').textContent='● CONNECTED';
+  $('status-badge').className='badge badge-green';
+  logEvent('INFO','Connected');
+});
+socket.on('disconnect',()=>{
+  $('status-badge').textContent='○ OFFLINE';
+  $('status-badge').className='badge badge-dim';
+  logEvent('INFO','Disconnected');
+});
+socket.on('update',data=>{
+  if(paused) return;
+  const prevKeys=new Set(Object.keys(networks));
+  const newNets={};
+  for(const n of data.networks) newNets[n.bssid]=n;
+
+  // events
+  for(const [bssid,net] of Object.entries(newNets)){
+    pushHistory(bssid,net.rssi);
+    if(!prevKeys.has(bssid)){
+      logEvent('NEW',net.ssid!=='<hidden>'?net.ssid:`Hidden (${bssid})`);
+      if(net.security==='Open'||net.security==='--') logEvent('OPEN',`⚠ Open: ${net.ssid}`);
+    } else if(net.rssi<-85&&(networks[bssid]?.rssi||0)>=-85){
+      logEvent('WEAK',`${net.ssid} → ${net.rssi}dBm`);
+    }
+  }
+  for(const b of prevKeys){ if(!newNets[b]) logEvent('LOST',networks[b]?.ssid||b); }
+
+  networks=newNets;
+  $('count-badge').textContent=`NETS: ${data.networks.length}`;
+  $('mode-badge').textContent=`MODE: ${data.source.toUpperCase()}`;
+  $('status-badge').textContent=`● ${data.ts}`;
+  updateStats();
+  refreshTable(prevKeys);
+  drawSignalBars();
+  drawChannelMap();
+});
+function manualScan(){socket.emit('request_scan');logEvent('INFO','Manual scan');}
+
+// ═══════════════════════════════════════════════════════════════════════
+// PAUSE
+// ═══════════════════════════════════════════════════════════════════════
+function togglePause(){
+  paused=!paused;
+  $('pause-btn').textContent=paused?'▶ RESUME':'⏸ PAUSE';
+  logEvent('INFO',paused?'Paused':'Resumed');
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SORT
+// ═══════════════════════════════════════════════════════════════════════
+function sortBy(k){sortKey=k;refreshTable(null);}
+
+// ═══════════════════════════════════════════════════════════════════════
+// STATS
+// ═══════════════════════════════════════════════════════════════════════
+function updateStats(){
+  const nets=Object.values(networks);
+  const opens=nets.filter(n=>n.security==='Open'||n.security==='--');
+  const best=nets.reduce((a,b)=>(!a||b.rssi>a.rssi)?b:a,null);
+  const worst=nets.reduce((a,b)=>(!a||b.rssi<a.rssi)?b:a,null);
+  $('st-total').textContent=nets.length;
+  $('st-24').textContent=nets.filter(n=>parseInt(n.channel)<=14).length;
+  $('st-5').textContent=nets.filter(n=>parseInt(n.channel)>14).length;
+  $('st-open').textContent=opens.length;
+  $('st-wpa3').textContent=nets.filter(n=>n.security==='WPA3').length;
+  $('st-hidden').textContent=nets.filter(n=>n.ssid==='<hidden>').length;
+  $('st-best').textContent=best?`${best.rssi}`:'—';
+  $('st-worst').textContent=worst?`${worst.rssi}`:'—';
+  if(opens.length>0){$('open-badge').style.display='';$('open-badge').textContent=`⚠ OPEN: ${opens.length}`;}
+  else $('open-badge').style.display='none';
+  $('strong-badge').textContent=best?`BEST: ${best.rssi}dBm`:'BEST: —';
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SPARKLINE
+// ═══════════════════════════════════════════════════════════════════════
+function drawSparkline(canvas,history,color){
+  const W=canvas.width,H=canvas.height,ctx=canvas.getContext('2d');
+  ctx.clearRect(0,0,W,H);
+  if(!history||history.length<2) return;
+  const mn=-95,mx=-30,range=mx-mn;
+  ctx.beginPath();
+  history.forEach((v,i)=>{
+    const x=(i/(history.length-1))*W, y=H-((v-mn)/range)*H;
+    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  });
+  ctx.strokeStyle=color;ctx.lineWidth=1.5;
+  ctx.shadowColor=color;ctx.shadowBlur=4;ctx.stroke();ctx.shadowBlur=0;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// TABLE
+// ═══════════════════════════════════════════════════════════════════════
+function refreshTable(prevKeys){
+  const tbody=$('net-tbody');
+  let sorted=Object.values(networks);
+  if(sortKey==='rssi') sorted.sort((a,b)=>b.rssi-a.rssi);
+  else if(sortKey==='ssid') sorted.sort((a,b)=>a.ssid.localeCompare(b.ssid));
+  else if(sortKey==='channel') sorted.sort((a,b)=>+a.channel-+b.channel);
+  else if(sortKey==='security') sorted.sort((a,b)=>a.security.localeCompare(b.security));
+
+  const existing={};
+  for(const tr of tbody.rows) existing[tr.dataset.bssid]=tr;
+  const seen=new Set();
+
+  for(const net of sorted){
+    seen.add(net.bssid);
+    const isNew=prevKeys&&!prevKeys.has(net.bssid);
+    const b=bars(net.rssi);
+    const sigHtml=Array.from({length:5},(_,i)=>{
+      const h=Math.round(4+(i/4)*14),color=i<b?rssiColor(net.rssi):'#1a2a3a';
+      return `<span class="sig-bar" style="height:${h}px;background:${color};width:8px;"></span>`;
+    }).join('');
+    const rc=norm(net.rssi)>.6?'rssi-strong':norm(net.rssi)>.3?'rssi-medium':'rssi-weak';
+    const sc=net.security==='Open'?'sec-open':net.security==='WPA3'?'sec-wpa3':'sec-wpa2';
+    const sc2=net.ssid==='<hidden>'?'hidden-ssid':'';
+    const bc=band(net.channel)==='5GHz'?'band-5':'band-24';
+    const isOpen=net.security==='Open'||net.security==='--';
+    const threat=isOpen?'<span class="threat-icon">⚠</span>':'';
+    const vendor=vendorFromBssid(net.bssid);
+
+    let tr;
+    if(existing[net.bssid]){ tr=existing[net.bssid]; }
+    else{
+      tr=document.createElement('tr');
+      tr.dataset.bssid=net.bssid;
+      tbody.appendChild(tr);
+      if(isNew) tr.classList.add('new-row');
+    }
+    tr.onclick=()=>inspectNetwork(net.bssid);
+    if(net.bssid===selectedBssid) tr.classList.add('selected');
+    else tr.classList.remove('selected');
+
+    tr.innerHTML=[
+      `<td class="${sc2}">${esc(net.ssid)}${threat}</td>`,
+      `<td style="color:var(--dim);font-size:.62rem;">${esc(vendor)}</td>`,
+      `<td class="${rc}">${net.rssi}</td>`,
+      `<td style="display:flex;align-items:flex-end;padding:2px 7px;">${sigHtml}</td>`,
+      `<td><canvas class="spark" width="46" height="13" data-bssid="${esc(net.bssid)}"></canvas></td>`,
+      `<td>${esc(net.channel)}</td>`,
+      `<td class="${bc}">${band(net.channel)}</td>`,
+      `<td class="${sc}">${esc(net.security)}</td>`,
+    ].join('');
+  }
+  for(const [bssid,tr] of Object.entries(existing)){
+    if(!seen.has(bssid)) tbody.removeChild(tr);
+  }
+  // draw sparklines
+  for(const cv of tbody.querySelectorAll('canvas.spark')){
+    const h=rssiHistory[cv.dataset.bssid];
+    if(h&&h.length>1) drawSparkline(cv,h,rssiColor(h[h.length-1]));
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// INSPECT MODAL
+// ═══════════════════════════════════════════════════════════════════════
+function inspectNetwork(bssid){
+  const net=networks[bssid];if(!net) return;
+  selectedBssid=bssid; refreshTable(null);
+  $('modal-title').textContent=net.ssid==='<hidden>'?'[ HIDDEN NETWORK ]':net.ssid;
+  const isOpen=net.security==='Open'||net.security==='--';
+  $('modal-threat').style.display=isOpen?'block':'none';
+  const rows=[
+    ['BSSID',net.bssid],['VENDOR',vendorFromBssid(net.bssid)],
+    ['RSSI',`${net.rssi} dBm`],['CHANNEL',net.channel],
+    ['BAND',band(net.channel)],['SECURITY',net.security],
+    ['LAST SEEN',elapsed(net.last_seen)],
+  ];
+  $('modal-body').innerHTML=rows.map(([k,v])=>
+    `<div class="modal-row"><span class="modal-key">${k}</span><span class="modal-val">${esc(v)}</span></div>`
+  ).join('');
+  const mc=$('modal-spark-canvas');
+  mc.width=mc.parentElement.offsetWidth||300;
+  drawSparkline(mc,rssiHistory[bssid]||[net.rssi],rssiColor(net.rssi));
+  $('modal-overlay').classList.add('open');
+}
+function closeModal(e){
+  if(e&&e.target!==e.currentTarget) return;
+  $('modal-overlay').classList.remove('open');
+  selectedBssid=null; refreshTable(null);
+}
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
+
+// ═══════════════════════════════════════════════════════════════════════
+// RADAR
+// ═══════════════════════════════════════════════════════════════════════
+const radarCanvas=$('radar-canvas'), rctx=radarCanvas.getContext('2d');
+function sizeRadar(){const p=radarCanvas.parentElement;radarCanvas.width=p.clientWidth;radarCanvas.height=p.clientHeight-30;}
+
+radarCanvas.addEventListener('click',e=>{
+  const rect=radarCanvas.getBoundingClientRect();
+  const mx=e.clientX-rect.left,my=e.clientY-rect.top;
+  const W=radarCanvas.width,H=radarCanvas.height,cx=W/2,cy=H/2,R=Math.min(cx,cy)-14;
+  let best=null,bestD=999;
+  for(const net of Object.values(networks)){
+    const a=((net.bssid.split(':').reduce((s,v)=>s+parseInt(v,16),0))%360+360)%360;
+    const dn=Math.max(.1,Math.min(.92,(net.rssi+100)/70)),d=R*(1-dn+.08);
+    const bx=cx+d*Math.cos((a-90)*Math.PI/180),by=cy+d*Math.sin((a-90)*Math.PI/180);
+    const dist=Math.hypot(mx-bx,my-by);
+    if(dist<bestD){bestD=dist;best=net;}
+  }
+  if(best&&bestD<22) inspectNetwork(best.bssid);
+});
+
+function drawRadar(){
+  const W=radarCanvas.width,H=radarCanvas.height,cx=W/2,cy=H/2,R=Math.min(cx,cy)-14;
+  rctx.clearRect(0,0,W,H);rctx.fillStyle='#05050f';rctx.fillRect(0,0,W,H);
+
+  // rings
+  for(let i=1;i<=4;i++){
+    const r=R*i/4;
+    rctx.beginPath();rctx.arc(cx,cy,r,0,Math.PI*2);
+    rctx.strokeStyle=i===4?'#0e1f30':'#091520';rctx.lineWidth=i===4?1.5:1;rctx.stroke();
+    rctx.font='9px Courier New';rctx.fillStyle='#253545';
+    rctx.fillText(`${-90+15*i}dBm`,cx+r+2,cy-2);
+  }
+  // crosshairs
+  rctx.strokeStyle='#091520';rctx.lineWidth=1;rctx.setLineDash([3,8]);
+  for(let a=0;a<360;a+=45){const rad=a*Math.PI/180;rctx.beginPath();rctx.moveTo(cx,cy);rctx.lineTo(cx+Math.cos(rad)*R,cy+Math.sin(rad)*R);rctx.stroke();}
+  rctx.setLineDash([]);
+
+  // sweep trail
+  for(let i=60;i>=0;i--){
+    const a=(radarAngle-i*2)*Math.PI/180,prev=(radarAngle-(i+1)*2)*Math.PI/180;
+    const alpha=Math.pow(1-i/60,1.6)*0.45;
+    rctx.beginPath();rctx.moveTo(cx,cy);
+    rctx.arc(cx,cy,R,prev-Math.PI/2,a-Math.PI/2);
+    rctx.closePath();rctx.fillStyle=`rgba(0,255,200,${alpha})`;rctx.fill();
+  }
+
+  // ripples
+  for(let i=ripples.length-1;i>=0;i--){
+    const rip=ripples[i];rip.r+=1.6;rip.alpha*=0.91;
+    if(rip.alpha<0.018){ripples.splice(i,1);continue;}
+    rctx.beginPath();rctx.arc(rip.bx,rip.by,rip.r,0,Math.PI*2);
+    rctx.strokeStyle=`${rip.col.replace('rgb','rgba').replace(')',`,${rip.alpha})`)}`;
+    rctx.lineWidth=1.2;rctx.stroke();
+  }
+
+  // blips
+  const now=performance.now();
+  for(const net of Object.values(networks)){
+    const angle_deg=((net.bssid.split(':').reduce((s,v)=>s+parseInt(v,16),0))%360+360)%360;
+    const dn=Math.max(.1,Math.min(.92,(net.rssi+100)/70)),dist=R*(1-dn+.08);
+    const brad=(angle_deg-90)*Math.PI/180;
+    const bx=cx+dist*Math.cos(brad),by=cy+dist*Math.sin(brad);
+    const isOpen=net.security==='Open'||net.security==='--';
+    const isSel=net.bssid===selectedBssid;
+
+    // sweep glow + ripple spawn
+    const diff=Math.abs(((radarAngle-angle_deg)%360+360)%360);
+    if(diff<12){
+      const ga=1-diff/12;
+      rctx.beginPath();rctx.arc(bx,by,14,0,Math.PI*2);
+      rctx.fillStyle=`rgba(255,255,0,${ga*0.2})`;rctx.fill();
+      rctx.beginPath();rctx.arc(bx,by,18,0,Math.PI*2);
+      rctx.strokeStyle=`rgba(255,255,0,${ga*0.32})`;rctx.lineWidth=1;rctx.stroke();
+      if(diff<2) ripples.push({bx,by,r:6,alpha:.7,col:isOpen?'rgb(255,0,150)':'rgb(0,255,136)'});
+    }
+
+    // open danger ring
+    if(isOpen){
+      rctx.beginPath();rctx.arc(bx,by,11,0,Math.PI*2);
+      rctx.strokeStyle=`rgba(255,0,150,${0.35+0.25*Math.sin(now/350)})`;
+      rctx.lineWidth=1.5;rctx.stroke();
+    }
+
+    // selected glow
+    if(isSel){
+      rctx.beginPath();rctx.arc(bx,by,13,0,Math.PI*2);
+      rctx.strokeStyle=`rgba(0,255,200,${0.5+0.3*Math.sin(now/180)})`;
+      rctx.lineWidth=2;rctx.stroke();
+    }
+
+    const pulsR=isSel?5+1.8*Math.sin(now/200):5;
+    const col=rssiColor(net.rssi);
+    rctx.beginPath();rctx.arc(bx,by,pulsR,0,Math.PI*2);
+    rctx.fillStyle=col;rctx.shadowColor=col;rctx.shadowBlur=isSel?18:10;rctx.fill();rctx.shadowBlur=0;
+    rctx.beginPath();rctx.arc(bx,by,pulsR+.5,0,Math.PI*2);
+    rctx.strokeStyle='rgba(255,255,255,.35)';rctx.lineWidth=1;rctx.stroke();
+
+    const lbl=net.ssid.length>13?net.ssid.slice(0,12)+'…':net.ssid;
+    rctx.font=(isSel?'bold ':'')+`9px Courier New`;
+    rctx.fillStyle=isSel?'#ffffff':'rgba(255,255,255,.75)';
+    rctx.shadowColor='#000';rctx.shadowBlur=4;rctx.fillText(lbl,bx+9,by-6);rctx.shadowBlur=0;
+  }
+
+  // sweep line
+  const sa=(radarAngle-90)*Math.PI/180;
+  rctx.beginPath();rctx.moveTo(cx,cy);rctx.lineTo(cx+Math.cos(sa)*R,cy+Math.sin(sa)*R);
+  const g=rctx.createLinearGradient(cx,cy,cx+Math.cos(sa)*R,cy+Math.sin(sa)*R);
+  g.addColorStop(0,'rgba(0,255,200,.1)');g.addColorStop(1,'rgba(0,255,200,.95)');
+  rctx.strokeStyle=g;rctx.lineWidth=2;rctx.shadowColor='#00ffc8';rctx.shadowBlur=8;rctx.stroke();rctx.shadowBlur=0;
+
+  rctx.beginPath();rctx.arc(cx,cy,5,0,Math.PI*2);
+  rctx.fillStyle='#00ffc8';rctx.shadowColor='#00ffc8';rctx.shadowBlur=12;rctx.fill();rctx.shadowBlur=0;
+  rctx.font='9px Courier New';rctx.fillStyle='#3a4a5a';rctx.fillText('YOU',cx-10,cy+R+16);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SIGNAL BARS
+// ═══════════════════════════════════════════════════════════════════════
+const sigCanvas=$('signal-canvas'),sctx=sigCanvas.getContext('2d');
+function sizeSignalCanvas(){const p=sigCanvas.parentElement;sigCanvas.width=p.clientWidth;sigCanvas.height=p.clientHeight-30;}
+function drawSignalBars(){
+  const W=sigCanvas.width,H=sigCanvas.height;
+  sctx.clearRect(0,0,W,H);sctx.fillStyle='#05050f';sctx.fillRect(0,0,W,H);
+  const nets=Object.values(networks).sort((a,b)=>b.rssi-a.rssi).slice(0,24);
+  if(!nets.length) return;
+  const PL=8,PR=8,PT=10,PB=26,chartH=H-PT-PB,n=nets.length;
+  const barW=Math.max(7,Math.floor((W-PL-PR)/n)-2);
+  [-90,-75,-60,-45,-30].forEach(m=>{
+    const y=PT+chartH-chartH*Math.max(0,Math.min(1,(m+100)/70));
+    sctx.strokeStyle='#0a1a26';sctx.setLineDash([4,5]);sctx.lineWidth=1;
+    sctx.beginPath();sctx.moveTo(PL,y);sctx.lineTo(W-PR,y);sctx.stroke();
+    sctx.setLineDash([]);sctx.font='7px Courier New';sctx.fillStyle='#2a3a4a';sctx.fillText(`${m}`,PL+1,y-2);
+  });
+  nets.forEach((net,i)=>{
+    const nn=Math.max(0,Math.min(1,(net.rssi+100)/70));
+    const bh=Math.max(3,chartH*nn),x=PL+i*(barW+2),yt=PT+chartH-bh,yb=PT+chartH,col=rssiColor(net.rssi);
+    sctx.shadowColor=col;sctx.shadowBlur=9;
+    const gr=sctx.createLinearGradient(x,yt,x,yb);gr.addColorStop(0,col);gr.addColorStop(1,col+'33');
+    sctx.fillStyle=gr;sctx.fillRect(x,yt,barW,bh);sctx.shadowBlur=0;
+    // trend line overlay
+    const hist=rssiHistory[net.bssid];
+    if(hist&&hist.length>1){
+      const mn=-95,mx2=-30,rng=mx2-mn;
+      sctx.beginPath();
+      hist.forEach((v,hi)=>{
+        const hx=x+(hi/(hist.length-1))*barW,hy=yb-bh*((v-mn)/rng);
+        hi===0?sctx.moveTo(hx,hy):sctx.lineTo(hx,hy);
+      });
+      sctx.strokeStyle='rgba(255,255,255,.3)';sctx.lineWidth=1;sctx.stroke();
+    }
+    sctx.save();sctx.font='7px Courier New';sctx.fillStyle='#6a8a9a';
+    sctx.translate(x+barW/2,yb+3);sctx.rotate(-0.5);
+    sctx.fillText(net.ssid.length>7?net.ssid.slice(0,6)+'…':net.ssid,0,0);
+    sctx.restore();
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// CHANNEL MAP
+// ═══════════════════════════════════════════════════════════════════════
+const chCanvas=$('channel-canvas'),cctx=chCanvas.getContext('2d');
+function sizeChannelCanvas(){const p=chCanvas.parentElement;chCanvas.width=p.clientWidth;chCanvas.height=p.clientHeight-30;}
+function drawChannelMap(){
+  const W=chCanvas.width,H=chCanvas.height;
+  cctx.clearRect(0,0,W,H);cctx.fillStyle='#05050f';cctx.fillRect(0,0,W,H);
+  const nets=Object.values(networks),chCount={};
+  for(const n of nets){const ch=String(n.channel||'?');chCount[ch]=(chCount[ch]||0)+1;}
+  const ch24=[1,2,3,4,5,6,7,8,9,10,11,12,13,14].map(String).filter(c=>chCount[c]);
+  const ch5=Object.keys(chCount).filter(c=>!ch24.includes(c)&&c!=='?').sort((a,b)=>+a-+b);
+  const all=[...ch24,...ch5];if(!all.length) return;
+  const PL=8,PR=8,PT=10,PB=20,chartH=H-PT-PB,maxC=Math.max(...Object.values(chCount));
+  const barW=Math.max(10,Math.floor((W-PL-PR)/all.length)-2);
+  let sepX=null;
+  all.forEach((ch,i)=>{
+    const is5=ch5.includes(ch),col=is5?'#ff0096':'#00ffc8';
+    if(is5&&sepX===null) sepX=PL+i*(barW+2)-4;
+    const cnt=chCount[ch],bh=Math.max(4,chartH*(cnt/maxC)),x=PL+i*(barW+2),yt=PT+chartH-bh,yb=PT+chartH;
+    cctx.shadowColor=col;cctx.shadowBlur=8;
+    const gr=cctx.createLinearGradient(x,yt,x,yb);gr.addColorStop(0,col);gr.addColorStop(1,col+'44');
+    cctx.fillStyle=gr;cctx.fillRect(x,yt,barW,bh);cctx.shadowBlur=0;
+    cctx.font='bold 8px Courier New';cctx.fillStyle=col;cctx.fillText(String(cnt),x+barW/2-3,yt-2);
+    cctx.font='7px Courier New';cctx.fillStyle='#6a8a9a';cctx.fillText(ch,x+barW/2-3,yb+11);
+  });
+  if(sepX!==null){
+    cctx.setLineDash([4,6]);cctx.strokeStyle='#2a3a4a';cctx.lineWidth=1;
+    cctx.beginPath();cctx.moveTo(sepX,PT);cctx.lineTo(sepX,PT+chartH);cctx.stroke();cctx.setLineDash([]);
+    cctx.font='7px Courier New';
+    cctx.fillStyle='#00ffc8';cctx.fillText('2.4G',PL,PT+chartH+18);
+    cctx.fillStyle='#ff0096';cctx.fillText('5G',sepX+4,PT+8);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// BACKGROUND PARTICLES
+// ═══════════════════════════════════════════════════════════════════════
+const bgCanvas=$('bg-canvas'),bgctx=bgCanvas.getContext('2d');
+const PARTICLES=Array.from({length:55},()=>({
+  x:Math.random()*innerWidth,y:Math.random()*innerHeight,
+  vx:(Math.random()-.5)*.14,vy:(Math.random()-.5)*.14,
+  r:Math.random()*1.4+.4,a:Math.random()
+}));
+function drawParticles(){
+  bgCanvas.width=innerWidth;bgCanvas.height=innerHeight;
+  bgctx.clearRect(0,0,bgCanvas.width,bgCanvas.height);
+  for(const p of PARTICLES){
+    p.x=(p.x+p.vx+bgCanvas.width)%bgCanvas.width;
+    p.y=(p.y+p.vy+bgCanvas.height)%bgCanvas.height;
+    bgctx.beginPath();bgctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+    bgctx.fillStyle=`rgba(0,255,200,${p.a*0.35})`;bgctx.fill();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// CLOCK
+// ═══════════════════════════════════════════════════════════════════════
+function tickClock(){$('clock').textContent=fmtTime();}
+setInterval(tickClock,1000);tickClock();
+setInterval(()=>refreshTable(null),5000);
+
+// ═══════════════════════════════════════════════════════════════════════
+// ANIMATION LOOP
+// ═══════════════════════════════════════════════════════════════════════
+function loop(){
+  radarAngle=(radarAngle+1.5)%360;
+  drawRadar();drawParticles();
+  requestAnimationFrame(loop);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// RESIZE
+// ═══════════════════════════════════════════════════════════════════════
+function resize(){
+  sizeRadar();sizeSignalCanvas();sizeChannelCanvas();
+  drawSignalBars();drawChannelMap();
+}
+window.addEventListener('resize',resize);
+setTimeout(()=>{resize();loop();},120);
+</script>
+</body>
+</html>

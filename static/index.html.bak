@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>⚡ SSID Visualizer — WiFi Radar</title>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+/* ── Reset & base ─────────────────────────────────────────── */
+*{margin:0;padding:0;box-sizing:border-box;}
+:root{
+  --bg:#05050f;
+  --panel:#080d1a;
+  --border:#0e1f30;
+  --cyan:#00ffc8;
+  --magenta:#ff0096;
+  --yellow:#ffe000;
+  --green:#00ff88;
+  --red:#ff4444;
+  --blue:#3399ff;
+  --text:#b4c8dc;
+  --dim:#3a4a5a;
+  --white:#e8f0ff;
+  --font:'Courier New',Courier,monospace;
+}
+html,body{
+  width:100%;height:100%;overflow:hidden;
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--font);
+}
+/* ── Scanline overlay ──────────────────────────────────────── */
+body::after{
+  content:'';
+  position:fixed;inset:0;pointer-events:none;z-index:9999;
+  background:repeating-linear-gradient(
+    0deg,
+    transparent,transparent 2px,
+    rgba(0,0,0,.08) 2px,rgba(0,0,0,.08) 4px
+  );
+}
+/* ── Layout ────────────────────────────────────────────────── */
+#root{display:flex;flex-direction:column;width:100vw;height:100vh;}
+#topbar{
+  flex:0 0 54px;
+  background:var(--panel);
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;
+  padding:0 20px;gap:18px;
+  box-shadow:0 2px 20px rgba(0,255,200,.07);
+}
+#title{
+  font-size:1.2rem;font-weight:bold;letter-spacing:.12em;
+  color:var(--cyan);text-shadow:0 0 14px var(--cyan);
+  white-space:nowrap;
+}
+.badge{
+  font-size:.68rem;padding:3px 9px;border-radius:3px;
+  border:1px solid;letter-spacing:.06em;white-space:nowrap;
+}
+.badge-green{color:var(--green);border-color:var(--green);background:rgba(0,255,136,.07);box-shadow:0 0 8px rgba(0,255,136,.2);}
+.badge-cyan {color:var(--cyan);border-color:var(--cyan); background:rgba(0,255,200,.07);box-shadow:0 0 8px rgba(0,255,200,.2);}
+.badge-mag  {color:var(--magenta);border-color:var(--magenta);background:rgba(255,0,150,.07);}
+.badge-dim  {color:var(--dim);border-color:var(--dim);}
+#spacer{flex:1;}
+#clock{font-size:.8rem;color:var(--dim);letter-spacing:.06em;}
+
+#content{
+  flex:1;display:grid;overflow:hidden;
+  grid-template-columns:420px 1fr;
+  grid-template-rows:1fr 180px;
+  gap:6px;padding:6px;
+}
+
+/* ── Panel base ────────────────────────────────────────────── */
+.panel{
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:4px;
+  display:flex;flex-direction:column;
+  overflow:hidden;
+  box-shadow:inset 0 0 40px rgba(0,0,0,.5), 0 0 2px var(--border);
+}
+.panel-title{
+  font-size:.72rem;letter-spacing:.12em;color:var(--cyan);
+  padding:7px 12px 5px;
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:8px;flex-shrink:0;
+}
+.panel-title .dot{
+  width:8px;height:8px;border-radius:50%;background:var(--cyan);
+  box-shadow:0 0 8px var(--cyan);
+  animation:pulse 1.6s ease-in-out infinite;
+}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+
+/* ── Radar panel ───────────────────────────────────────────── */
+#radar-panel{grid-row:1;grid-column:1;}
+#radar-canvas{flex:1;width:100%;display:block;}
+
+/* ── Table panel ───────────────────────────────────────────── */
+#table-panel{grid-row:1;grid-column:2;overflow:hidden;}
+#table-wrap{flex:1;overflow-y:auto;overflow-x:hidden;}
+
+/* Scrollbar styling */
+#table-wrap::-webkit-scrollbar{width:5px;}
+#table-wrap::-webkit-scrollbar-track{background:var(--bg);}
+#table-wrap::-webkit-scrollbar-thumb{background:var(--dim);border-radius:3px;}
+
+table{width:100%;border-collapse:collapse;font-size:.75rem;}
+thead tr{background:rgba(0,255,200,.04);position:sticky;top:0;z-index:1;}
+th{
+  padding:7px 10px;text-align:left;
+  color:var(--cyan);letter-spacing:.08em;font-size:.68rem;
+  border-bottom:1px solid var(--border);
+  white-space:nowrap;
+}
+td{padding:6px 10px;border-bottom:1px solid rgba(14,31,48,.8);white-space:nowrap;}
+tr:hover td{background:rgba(0,255,200,.04);}
+.new-row td{animation:rowflash .6s ease-out;}
+@keyframes rowflash{from{background:rgba(0,255,200,.18);}to{background:transparent;}}
+.sig-bar{display:inline-block;width:10px;border-radius:1px;margin-right:1px;vertical-align:bottom;}
+.rssi-strong{color:var(--green);}
+.rssi-medium{color:var(--yellow);}
+.rssi-weak  {color:var(--red);}
+.sec-open   {color:var(--magenta);}
+.sec-wpa3   {color:var(--cyan);}
+.sec-wpa2   {color:var(--text);}
+.hidden-ssid{color:var(--dim);font-style:italic;}
+.band-24{color:var(--cyan);}
+.band-5 {color:var(--magenta);}
+
+/* ── Bottom panels ─────────────────────────────────────────── */
+#signal-panel  {grid-row:2;grid-column:1;}
+#channel-panel {grid-row:2;grid-column:2;}
+#signal-canvas,#channel-canvas{flex:1;display:block;width:100%;}
+
+/* ── Particles ─────────────────────────────────────────────── */
+#bg-canvas{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.25;}
+#root{position:relative;z-index:1;}
+</style>
+</head>
+<body>
+
+<canvas id="bg-canvas"></canvas>
+
+<div id="root">
+  <!-- Top bar -->
+  <div id="topbar">
+    <div id="title">⚡ SSID VISUALIZER</div>
+    <div class="badge badge-green" id="status-badge">● CONNECTING…</div>
+    <div class="badge badge-cyan"  id="count-badge">NETWORKS: 0</div>
+    <div class="badge badge-mag"   id="mode-badge">MODE: INIT</div>
+    <div id="spacer"></div>
+    <button onclick="manualScan()" style="
+      background:transparent;border:1px solid var(--cyan);color:var(--cyan);
+      font-family:var(--font);font-size:.7rem;padding:4px 12px;
+      border-radius:3px;cursor:pointer;letter-spacing:.06em;
+      transition:all .2s;
+    " onmouseover="this.style.background='rgba(0,255,200,.1)'"
+       onmouseout ="this.style.background='transparent'">
+      ↻ SCAN NOW
+    </button>
+    <div id="clock" class="badge badge-dim">--:--:--</div>
+  </div>
+
+  <!-- Main content grid -->
+  <div id="content">
+
+    <!-- Radar -->
+    <div class="panel" id="radar-panel">
+      <div class="panel-title"><div class="dot"></div>RADAR SWEEP</div>
+      <canvas id="radar-canvas"></canvas>
+    </div>
+
+    <!-- Table -->
+    <div class="panel" id="table-panel">
+      <div class="panel-title"><div class="dot"></div>LIVE NETWORK FEED</div>
+      <div id="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>SSID</th>
+              <th>BSSID</th>
+              <th>RSSI</th>
+              <th>SIGNAL</th>
+              <th>CH</th>
+              <th>BAND</th>
+              <th>SECURITY</th>
+              <th>SEEN</th>
+            </tr>
+          </thead>
+          <tbody id="net-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Signal bars -->
+    <div class="panel" id="signal-panel">
+      <div class="panel-title"><div class="dot" style="background:var(--green);box-shadow:0 0 8px var(--green);"></div>SIGNAL STRENGTH</div>
+      <canvas id="signal-canvas"></canvas>
+    </div>
+
+    <!-- Channel map -->
+    <div class="panel" id="channel-panel">
+      <div class="panel-title"><div class="dot" style="background:var(--magenta);box-shadow:0 0 8px var(--magenta);"></div>CHANNEL USAGE MAP</div>
+      <canvas id="channel-canvas"></canvas>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// UTILITIES
+// ═══════════════════════════════════════════════════════════════════════════
+const $ = id => document.getElementById(id);
+
+function rssiColor(rssi){
+  const n = norm(rssi);
+  if(n > .6) return '#00ff88';
+  if(n > .3) return '#ffe000';
+  return '#ff4444';
+}
+function norm(rssi){ return Math.max(0, Math.min(1, (rssi + 90) / 60)); }
+function bars(rssi,max=5){ return Math.max(1, Math.round(norm(rssi)*max)); }
+function band(ch){ return parseInt(ch) > 14 ? '5GHz' : '2.4GHz'; }
+
+function elapsed(ts){
+  const s = Math.round(Date.now()/1000 - ts);
+  if(s < 5) return 'just now';
+  if(s < 60) return s+'s ago';
+  return Math.floor(s/60)+'m ago';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════════════════
+let networks = {};
+let radarAngle = 0;
+let animFrame  = null;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SOCKET.IO
+// ═══════════════════════════════════════════════════════════════════════════
+const socket = io();
+
+socket.on('connect', ()=>{
+  $('status-badge').textContent = '● CONNECTED';
+  $('status-badge').className = 'badge badge-green';
+});
+socket.on('disconnect', ()=>{
+  $('status-badge').textContent = '○ OFFLINE';
+  $('status-badge').className = 'badge badge-dim';
+});
+socket.on('update', data =>{
+  const prevKeys = new Set(Object.keys(networks));
+  networks = {};
+  for(const n of data.networks) networks[n.bssid] = n;
+
+  $('count-badge').textContent = `NETWORKS: ${data.networks.length}`;
+  $('mode-badge').textContent  = `MODE: ${data.source.toUpperCase()}`;
+  $('status-badge').textContent= `● ${data.ts}`;
+
+  const newKeys = new Set(Object.keys(networks));
+  refreshTable(prevKeys);
+  drawSignalBars();
+  drawChannelMap();
+});
+
+function manualScan(){ socket.emit('request_scan'); }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TABLE
+// ═══════════════════════════════════════════════════════════════════════════
+function refreshTable(prevKeys){
+  const tbody = $('net-tbody');
+  const sorted = Object.values(networks).sort((a,b)=> b.rssi - a.rssi);
+  const existing = {};
+  for(const tr of tbody.rows) existing[tr.dataset.bssid] = tr;
+
+  const seen = new Set();
+  for(const net of sorted){
+    seen.add(net.bssid);
+    const isNew = prevKeys && !prevKeys.has(net.bssid);
+    const b = bars(net.rssi);
+    const sigHtml = Array.from({length:5}, (_,i) => {
+      const h = Math.round(4 + (i/4)*14);
+      const color = i < b ? rssiColor(net.rssi) : '#1a2a3a';
+      return `<span class="sig-bar" style="height:${h}px;background:${color};width:9px;"></span>`;
+    }).join('');
+    const rssiClass = norm(net.rssi)>.6?'rssi-strong':norm(net.rssi)>.3?'rssi-medium':'rssi-weak';
+    const secClass  = net.security==='Open'?'sec-open':net.security==='WPA3'?'sec-wpa3':'sec-wpa2';
+    const ssidClass = net.ssid==='<hidden>'?'hidden-ssid':'';
+    const bandClass = band(net.channel)==='5GHz'?'band-5':'band-24';
+    const cells = [
+      `<td class="${ssidClass}">${esc(net.ssid)}</td>`,
+      `<td style="color:var(--dim);font-size:.7rem;">${esc(net.bssid)}</td>`,
+      `<td class="${rssiClass}">${net.rssi} dBm</td>`,
+      `<td style="display:flex;align-items:flex-end;gap:0;padding:4px 10px;">${sigHtml}</td>`,
+      `<td>${esc(net.channel)}</td>`,
+      `<td class="${bandClass}">${band(net.channel)}</td>`,
+      `<td class="${secClass}">${esc(net.security)}</td>`,
+      `<td style="color:var(--dim);font-size:.68rem;">${elapsed(net.last_seen)}</td>`,
+    ].join('');
+
+    if(existing[net.bssid]){
+      existing[net.bssid].innerHTML = cells;
+    } else {
+      const tr = document.createElement('tr');
+      tr.dataset.bssid = net.bssid;
+      tr.innerHTML = cells;
+      if(isNew) tr.classList.add('new-row');
+      tbody.appendChild(tr);
+    }
+  }
+  // Remove stale rows
+  for(const [bssid, tr] of Object.entries(existing)){
+    if(!seen.has(bssid)) tbody.removeChild(tr);
+  }
+}
+
+function esc(s){ const d=document.createElement('div');d.textContent=String(s??'');return d.innerHTML; }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RADAR
+// ═══════════════════════════════════════════════════════════════════════════
+const radarCanvas = $('radar-canvas');
+const rctx = radarCanvas.getContext('2d');
+
+function sizeRadar(){
+  const p = radarCanvas.parentElement;
+  radarCanvas.width  = p.clientWidth;
+  radarCanvas.height = p.clientHeight - 32; // subtract header
+}
+
+function drawRadar(){
+  const W = radarCanvas.width, H = radarCanvas.height;
+  const cx = W/2, cy = H/2;
+  const R  = Math.min(cx, cy) - 14;
+
+  rctx.clearRect(0,0,W,H);
+  rctx.fillStyle = '#05050f';
+  rctx.fillRect(0,0,W,H);
+
+  // ── rings ──────────────────────────────────────────────────
+  for(let i=1;i<=4;i++){
+    const r = R*i/4;
+    rctx.beginPath();
+    rctx.arc(cx,cy,r,0,Math.PI*2);
+    rctx.strokeStyle = i===4 ? '#0e1f30' : '#091520';
+    rctx.lineWidth = i===4 ? 1.5 : 1;
+    rctx.stroke();
+    const rssiLabel = -90 + 15*i;
+    rctx.font = '9px Courier New';
+    rctx.fillStyle = '#3a4a5a';
+    rctx.fillText(`${rssiLabel}dBm`, cx + r + 2, cy - 2);
+  }
+  // crosshairs
+  rctx.strokeStyle = '#091520';
+  rctx.lineWidth = 1;
+  rctx.setLineDash([3,8]);
+  for(let a=0;a<360;a+=45){
+    const rad = a*Math.PI/180;
+    rctx.beginPath();
+    rctx.moveTo(cx,cy);
+    rctx.lineTo(cx + Math.cos(rad)*R, cy + Math.sin(rad)*R);
+    rctx.stroke();
+  }
+  rctx.setLineDash([]);
+
+  // ── sweep trail ─────────────────────────────────────────────
+  const TRAIL = 60;
+  for(let i=TRAIL;i>=0;i--){
+    const a   = (radarAngle - i*2) * Math.PI/180;
+    const prev= (radarAngle - (i+1)*2) * Math.PI/180;
+    const alpha = Math.pow(1 - i/TRAIL, 1.6) * 0.45;
+    rctx.beginPath();
+    rctx.moveTo(cx,cy);
+    rctx.arc(cx,cy,R,prev-Math.PI/2,a-Math.PI/2);
+    rctx.closePath();
+    rctx.fillStyle = `rgba(0,255,200,${alpha})`;
+    rctx.fill();
+  }
+
+  // ── blips ────────────────────────────────────────────────────
+  const nets = Object.values(networks);
+  for(const net of nets){
+    const angle_deg = ((net.bssid.split(':').reduce((a,v)=>a+parseInt(v,16),0)) % 360 + 360) % 360;
+    const distNorm  = Math.max(.1, Math.min(.92, (net.rssi + 100)/70));
+    const dist      = R * (1 - distNorm + .08);
+    const brad      = (angle_deg - 90)*Math.PI/180;
+    const bx = cx + dist*Math.cos(brad);
+    const by = cy + dist*Math.sin(brad);
+
+    // sweep proximity glow
+    const diff = Math.abs(((radarAngle - angle_deg) % 360 + 360) % 360);
+    if(diff < 12){
+      const ga = 1 - diff/12;
+      rctx.beginPath();
+      rctx.arc(bx,by,14,0,Math.PI*2);
+      rctx.fillStyle = `rgba(255,255,0,${ga*0.25})`;
+      rctx.fill();
+      rctx.beginPath();
+      rctx.arc(bx,by,18,0,Math.PI*2);
+      rctx.strokeStyle=`rgba(255,255,0,${ga*0.4})`;
+      rctx.lineWidth=1;
+      rctx.stroke();
+    }
+
+    // blip body
+    const col = rssiColor(net.rssi);
+    rctx.beginPath();
+    rctx.arc(bx,by,5,0,Math.PI*2);
+    rctx.fillStyle = col;
+    rctx.shadowColor = col;
+    rctx.shadowBlur  = 10;
+    rctx.fill();
+    rctx.shadowBlur = 0;
+    rctx.beginPath();
+    rctx.arc(bx,by,5.5,0,Math.PI*2);
+    rctx.strokeStyle='rgba(255,255,255,.4)';
+    rctx.lineWidth=1;
+    rctx.stroke();
+
+    // label
+    const lbl = net.ssid.length>13 ? net.ssid.slice(0,12)+'…' : net.ssid;
+    rctx.font = 'bold 9px Courier New';
+    rctx.fillStyle = 'rgba(255,255,255,.75)';
+    rctx.shadowColor= '#000';
+    rctx.shadowBlur = 4;
+    rctx.fillText(lbl, bx+9, by-6);
+    rctx.shadowBlur = 0;
+  }
+
+  // ── sweep line ──────────────────────────────────────────────
+  const sa = (radarAngle - 90)*Math.PI/180;
+  rctx.beginPath();
+  rctx.moveTo(cx,cy);
+  rctx.lineTo(cx + Math.cos(sa)*R, cy + Math.sin(sa)*R);
+  const grad = rctx.createLinearGradient(cx,cy, cx+Math.cos(sa)*R, cy+Math.sin(sa)*R);
+  grad.addColorStop(0,'rgba(0,255,200,.1)');
+  grad.addColorStop(1,'rgba(0,255,200,.9)');
+  rctx.strokeStyle = grad;
+  rctx.lineWidth   = 2;
+  rctx.shadowColor = '#00ffc8';
+  rctx.shadowBlur  = 8;
+  rctx.stroke();
+  rctx.shadowBlur  = 0;
+
+  // center dot
+  rctx.beginPath();
+  rctx.arc(cx,cy,5,0,Math.PI*2);
+  rctx.fillStyle='#00ffc8';
+  rctx.shadowColor='#00ffc8';
+  rctx.shadowBlur=12;
+  rctx.fill();
+  rctx.shadowBlur=0;
+
+  // YOU label
+  rctx.font='9px Courier New';
+  rctx.fillStyle='#3a4a5a';
+  rctx.fillText('YOU', cx-10, cy+R+16);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SIGNAL BARS
+// ═══════════════════════════════════════════════════════════════════════════
+const sigCanvas = $('signal-canvas');
+const sctx = sigCanvas.getContext('2d');
+
+function sizeSignalCanvas(){
+  const p = sigCanvas.parentElement;
+  sigCanvas.width  = p.clientWidth;
+  sigCanvas.height = p.clientHeight - 32;
+}
+
+function drawSignalBars(){
+  const W = sigCanvas.width, H = sigCanvas.height;
+  sctx.clearRect(0,0,W,H);
+  sctx.fillStyle='#05050f';
+  sctx.fillRect(0,0,W,H);
+
+  const nets = Object.values(networks).sort((a,b)=>b.rssi-a.rssi).slice(0,24);
+  if(!nets.length){ return; }
+
+  const PL=8,PR=8,PT=10,PB=28;
+  const chartH = H-PT-PB;
+  const n = nets.length;
+  const barW = Math.max(8, Math.floor((W-PL-PR)/(n)) - 2);
+
+  // Grid lines
+  [-90,-75,-60,-45,-30].forEach(rssiMark=>{
+    const nn = Math.max(0,Math.min(1,(rssiMark+100)/70));
+    const y = PT + chartH - chartH*nn;
+    sctx.strokeStyle='#0a1a26';
+    sctx.setLineDash([4,5]);
+    sctx.lineWidth=1;
+    sctx.beginPath();sctx.moveTo(PL,y);sctx.lineTo(W-PR,y);sctx.stroke();
+    sctx.setLineDash([]);
+    sctx.font='8px Courier New';
+    sctx.fillStyle='#2a3a4a';
+    sctx.fillText(`${rssiMark}`, PL+1, y-2);
+  });
+
+  nets.forEach((net,i)=>{
+    const nn = Math.max(0,Math.min(1,(net.rssi+100)/70));
+    const bh = Math.max(3, chartH*nn);
+    const x  = PL + i*(barW+2);
+    const yt = PT+chartH-bh;
+    const yb = PT+chartH;
+    const col= rssiColor(net.rssi);
+
+    // glow
+    sctx.shadowColor=col; sctx.shadowBlur=10;
+    const gr = sctx.createLinearGradient(x,yt,x,yb);
+    gr.addColorStop(0, col);
+    gr.addColorStop(1, col+'44');
+    sctx.fillStyle=gr;
+    sctx.fillRect(x,yt,barW,bh);
+    sctx.shadowBlur=0;
+
+    // SSID label (rotated)
+    sctx.save();
+    sctx.font='7px Courier New';
+    sctx.fillStyle='#7a9ab0';
+    sctx.translate(x+barW/2, yb+3);
+    sctx.rotate(-0.55);
+    const lbl = net.ssid.length>7?net.ssid.slice(0,6)+'…':net.ssid;
+    sctx.fillText(lbl,0,0);
+    sctx.restore();
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CHANNEL MAP
+// ═══════════════════════════════════════════════════════════════════════════
+const chCanvas = $('channel-canvas');
+const cctx = chCanvas.getContext('2d');
+
+function sizeChannelCanvas(){
+  const p = chCanvas.parentElement;
+  chCanvas.width  = p.clientWidth;
+  chCanvas.height = p.clientHeight - 32;
+}
+
+function drawChannelMap(){
+  const W = chCanvas.width, H = chCanvas.height;
+  cctx.clearRect(0,0,W,H);
+  cctx.fillStyle='#05050f';
+  cctx.fillRect(0,0,W,H);
+
+  const nets = Object.values(networks);
+  const chCount={}, chNets={};
+  for(const n of nets){
+    const ch = String(n.channel||'?');
+    chCount[ch] = (chCount[ch]||0)+1;
+    if(!chNets[ch]) chNets[ch]=[];
+    chNets[ch].push(n);
+  }
+
+  const ch24 = [1,2,3,4,5,6,7,8,9,10,11,12,13,14].map(String).filter(c=>chCount[c]);
+  const ch5  = Object.keys(chCount).filter(c=>!ch24.includes(c)&&c!=='?').sort((a,b)=>+a-+b);
+  const all  = [...ch24,...ch5];
+  if(!all.length) return;
+
+  const PL=8,PR=8,PT=10,PB=22;
+  const chartH = H-PT-PB;
+  const maxC = Math.max(...Object.values(chCount));
+  const barW = Math.max(12, Math.floor((W-PL-PR)/all.length)-2);
+
+  let sepX = null;
+  all.forEach((ch,i)=>{
+    const is5 = ch5.includes(ch);
+    const col = is5 ? '#ff0096' : '#00ffc8';
+    if(is5 && sepX===null) sepX = PL + i*(barW+2) - 4;
+
+    const cnt = chCount[ch];
+    const frac = cnt/maxC;
+    const bh = Math.max(4, chartH*frac);
+    const x  = PL + i*(barW+2);
+    const yt = PT+chartH-bh;
+    const yb = PT+chartH;
+
+    cctx.shadowColor=col;cctx.shadowBlur=8;
+    const gr = cctx.createLinearGradient(x,yt,x,yb);
+    gr.addColorStop(0,col);
+    gr.addColorStop(1,col+'44');
+    cctx.fillStyle=gr;
+    cctx.fillRect(x,yt,barW,bh);
+    cctx.shadowBlur=0;
+
+    // count
+    cctx.font='bold 9px Courier New';
+    cctx.fillStyle=col;
+    cctx.fillText(String(cnt), x+barW/2-4, yt-2);
+
+    // channel label
+    cctx.font='8px Courier New';
+    cctx.fillStyle='#7a9ab0';
+    cctx.fillText(ch, x+barW/2-4, yb+12);
+  });
+
+  if(sepX!==null){
+    cctx.setLineDash([4,6]);
+    cctx.strokeStyle='#2a3a4a';
+    cctx.lineWidth=1;
+    cctx.beginPath();cctx.moveTo(sepX,PT);cctx.lineTo(sepX,PT+chartH);cctx.stroke();
+    cctx.setLineDash([]);
+    cctx.font='8px Courier New';
+    cctx.fillStyle='#00ffc8';cctx.fillText('2.4GHz',PL,PT+chartH+20);
+    cctx.fillStyle='#ff0096';cctx.fillText('5GHz',sepX+4,PT+8);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BACKGROUND PARTICLES
+// ═══════════════════════════════════════════════════════════════════════════
+const bgCanvas = $('bg-canvas');
+const bgctx = bgCanvas.getContext('2d');
+const PARTICLES = Array.from({length:60},()=>({
+  x: Math.random()*window.innerWidth,
+  y: Math.random()*window.innerHeight,
+  vx:(Math.random()-.5)*.15,
+  vy:(Math.random()-.5)*.15,
+  r: Math.random()*1.5+.5,
+  a: Math.random()
+}));
+
+function drawParticles(){
+  bgCanvas.width  = window.innerWidth;
+  bgCanvas.height = window.innerHeight;
+  bgctx.clearRect(0,0,bgCanvas.width,bgCanvas.height);
+  for(const p of PARTICLES){
+    p.x = (p.x+p.vx+bgCanvas.width)%bgCanvas.width;
+    p.y = (p.y+p.vy+bgCanvas.height)%bgCanvas.height;
+    bgctx.beginPath();
+    bgctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+    bgctx.fillStyle=`rgba(0,255,200,${p.a*0.4})`;
+    bgctx.fill();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CLOCK
+// ═══════════════════════════════════════════════════════════════════════════
+function tickClock(){
+  const now = new Date();
+  const hh=String(now.getHours()).padStart(2,'0');
+  const mm=String(now.getMinutes()).padStart(2,'0');
+  const ss=String(now.getSeconds()).padStart(2,'0');
+  $('clock').textContent = `${hh}:${mm}:${ss}`;
+}
+setInterval(tickClock,1000);
+tickClock();
+
+// Refresh elapsed times in table every 5s
+setInterval(()=>refreshTable(null),5000);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ANIMATION LOOP
+// ═══════════════════════════════════════════════════════════════════════════
+function loop(){
+  radarAngle = (radarAngle + 1.5) % 360;
+  drawRadar();
+  drawParticles();
+  requestAnimationFrame(loop);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RESIZE
+// ═══════════════════════════════════════════════════════════════════════════
+function resize(){
+  sizeRadar();
+  sizeSignalCanvas();
+  sizeChannelCanvas();
+  drawSignalBars();
+  drawChannelMap();
+}
+window.addEventListener('resize', resize);
+// Wait for layout to settle
+setTimeout(()=>{ resize(); loop(); }, 120);
+</script>
+</body>
+</html>

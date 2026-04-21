@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>⚡ SPECTRE — Signal &amp; Protocol Exploitation, Capture, Tracking, Recon Engine</title>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<link rel="stylesheet" href="dashboard.css"/>
+<!-- SPLIT FOR SIZE: original inline CSS/JS moved to dashboard.css + db-*.js -->
+</head>
+<body>
+
+<!-- TOPBAR -->
+<div id="topbar">
+  <div id="title"><span style="color:var(--mag)">👻</span> SPECTRE</div>
+  <div class="badge bg" id="status-b">● CONNECTING</div>
+  <div class="badge bc" id="wifi-b">WiFi: 0</div>
+  <div class="badge bb" id="ble-b">BLE: 0</div>
+  <div class="badge br" id="alert-b" style="display:none">⚠ OPEN</div>
+  <div class="badge bm" id="mode-b">DEMO</div>
+  <div id="sp"></div>
+  <button class="tbtn" onclick="socket.emit('request_wifi_scan')" title="Trigger WiFi scan now">↻ SCAN</button>
+  <button class="tbtn" onclick="socket.emit('clear_ble')" title="Clear BLE device list">✕ BLE</button>
+  <button class="tbtn" onclick="socket.emit('clear_events')" title="Clear event log">✕ LOG</button>
+  <button class="tbtn" onclick="clearAlerts()" title="Clear alerts">✕ ALERTS</button>
+  <button class="tbtn" onclick="injectDemoBle()" title="Load demo BLE devices">🧪 DEMO BLE</button>
+  <button class="tbtn" onclick="toggleDemo()" title="Toggle demo/live mode">⚡ DEMO</button>
+  <span class="tbtn" style="cursor:default;border-color:var(--dim);color:var(--dim)">SCAN <span id="interval-val">6s</span></span>
+  <input id="interval-slider" type="range" min="2" max="60" value="6" style="width:60px;accent-color:var(--cyan)" oninput="setScanInterval(this.value)" title="WiFi scan interval">
+  <button class="tbtn" onclick="resetLayout()" title="Reset panel positions">⊞ RESET</button>
+  <button class="tbtn" onclick="toggleThemePicker()" title="Switch theme">🎨 THEME</button>
+  <div id="clock" class="badge bd">--:--:--</div>
+</div>
+
+<!-- TABS -->
+<div id="tabs">
+  <div class="tab active" onclick="switchTab('wifi')">📡 RF RECON</div>
+  <div class="tab" onclick="switchTab('ble')">🍎 CONTINUITY</div>
+  <div class="tab" onclick="switchTab('timeline')">📈 TIMELINE</div>
+  <div class="tab" onclick="switchTab('alerts')">⚠ INTEL</div>
+  <div class="tab" onclick="switchTab('system')">🖥 OPS</div>
+</div>
+
+<!-- BODY -->
+<div id="body">
+
+<!-- TAB 1: WIFI -->
+<div class="tab-content active" id="tab-wifi">
+  <div class="panel" id="radar-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--cyan);box-shadow:0 0 7px var(--cyan)"></div>RADAR SWEEP</div>
+    <canvas id="radar-canvas"></canvas>
+  </div>
+  <div class="panel" id="wifi-table-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--cyan);box-shadow:0 0 7px var(--cyan)"></div>LIVE NETWORKS
+      <span style="margin-left:auto;font-size:.53rem;color:var(--dim)">click to inspect</span>
+    </div>
+    <div class="filter-bar">
+      <input class="filter-input" id="wifi-search" placeholder="🔍 filter SSID / BSSID / CH / SEC" oninput="setWifiFilter(this.value)">
+    </div>
+    <div class="scroll" id="wifi-table-wrap">
+      <table><thead><tr>
+        <th onclick="wSort('ssid')">SSID ⇅</th><th>VENDOR</th>
+        <th onclick="wSort('rssi')">RSSI ⇅</th><th>SIG</th>
+        <th onclick="wSort('channel')">CH ⇅</th><th>BAND</th>
+        <th onclick="wSort('security')">SEC ⇅</th>
+      </tr></thead><tbody id="wifi-tbody"></tbody></table>
+    </div>
+  </div>
+  <div class="panel" id="wifi-stats-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--blue);box-shadow:0 0 7px var(--blue)"></div>STATS</div>
+    <div id="wifi-stats-inner">
+      <div class="sr"><span class="sk">TOTAL</span><span class="sv" id="ws-total" style="color:var(--cyan)">0</span></div>
+      <div class="sr"><span class="sk">2.4GHz</span><span class="sv" id="ws-24" style="color:var(--cyan)">0</span></div>
+      <div class="sr"><span class="sk">5GHz</span><span class="sv" id="ws-5" style="color:var(--mag)">0</span></div>
+      <div class="sr"><span class="sk">OPEN</span><span class="sv" id="ws-open" style="color:var(--mag)">0</span></div>
+      <div class="sr"><span class="sk">WPA3</span><span class="sv" id="ws-wpa3" style="color:var(--cyan)">0</span></div>
+      <div class="sr"><span class="sk">HIDDEN</span><span class="sv" id="ws-hid" style="color:var(--dim)">0</span></div>
+      <div class="sr"><span class="sk">BEST</span><span class="sv" id="ws-best" style="color:var(--green)">—</span></div>
+      <div class="sr"><span class="sk">WORST</span><span class="sv" id="ws-worst" style="color:var(--red)">—</span></div>
+    </div>
+  </div>
+  <div class="panel" id="sig-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--green);box-shadow:0 0 7px var(--green)"></div>SIGNAL STRENGTH</div>
+    <canvas id="sig-canvas"></canvas>
+  </div>
+  <div class="panel" id="ch-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--mag);box-shadow:0 0 7px var(--mag)"></div>CHANNEL MAP</div>
+    <canvas id="ch-canvas"></canvas>
+  </div>
+  <div class="panel" id="wifi-tl-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--yellow);box-shadow:0 0 7px var(--yellow)"></div>RSSI TREND</div>
+    <canvas id="wifi-tl-canvas"></canvas>
+  </div>
+</div>
+
+<!-- TAB 2: BLE -->
+<div class="tab-content" id="tab-ble">
+  <div class="panel" id="ble-devices-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--blue);box-shadow:0 0 7px var(--blue)"></div>APPLE DEVICES
+      <span style="margin-left:auto;display:flex;gap:3px;align-items:center">
+        <button class="vbtn active" id="vbtn-grid"    onclick="setBleView('grid')"    title="Card Grid">⊞</button>
+        <button class="vbtn"        id="vbtn-table"   onclick="setBleView('table')"   title="Table">≡</button>
+        <button class="vbtn"        id="vbtn-compact" onclick="setBleView('compact')" title="Compact List">☰</button>
+        <button class="vbtn"        id="vbtn-raw"     onclick="setBleView('raw')"     title="Raw Hex">⭡</button>
+      </span>
+    </div>
+    <div class="filter-bar ble-filter-bar">
+      <button class="filt-pill active" id="fp-all"     onclick="setBleTypeFilter('all');setFiltPill('all')">ALL</button>
+      <button class="filt-pill" id="fp-nearby"  onclick="setBleTypeFilter('nearby');setFiltPill('nearby')">📱 PHONE</button>
+      <button class="filt-pill" id="fp-airpods" onclick="setBleTypeFilter('airpods');setFiltPill('airpods')">🎧 AIRPODS</button>
+      <button class="filt-pill" id="fp-action"  onclick="setBleTypeFilter('action');setFiltPill('action')">⚡ ACTION</button>
+      <button class="filt-pill" id="fp-airdrop" onclick="setBleTypeFilter('airdrop');setFiltPill('airdrop')">📡 AIRDROP</button>
+      <button class="filt-pill" id="fp-hotspot" onclick="setBleTypeFilter('hotspot');setFiltPill('hotspot')">📶 HOTSPOT</button>
+      <button class="filt-pill" id="fp-findmy"  onclick="setBleTypeFilter('findmy');setFiltPill('findmy')">📍 FIND MY</button>
+      <button class="filt-pill" id="fp-siri"    onclick="setBleTypeFilter('siri');setFiltPill('siri')">🎤 SIRI</button>
+      <button class="filt-pill" id="fp-homekit" onclick="setBleTypeFilter('homekit');setFiltPill('homekit')">🏠 HOMEKIT</button>
+    </div>
+    <div class="scroll" id="ble-view-wrap">
+      <div id="ble-grid"></div>
+      <table id="ble-table" style="display:none"><thead><tr>
+        <th onclick="bleTblSort('name')">NAME ⇅</th>
+        <th onclick="bleTblSort('type')">TYPE ⇅</th>
+        <th onclick="bleTblSort('rssi')">RSSI ⇅</th>
+        <th>DETAIL</th>
+        <th onclick="bleTblSort('seen')">SEEN ⇅</th>
+      </tr></thead><tbody id="ble-tbody"></tbody></table>
+      <div id="ble-compact" style="display:none"></div>
+      <div id="ble-raw"     style="display:none"></div>
+    </div>
+  </div>
+  <div class="panel" id="ble-log-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--yellow);box-shadow:0 0 7px var(--yellow)"></div>EVENT STREAM</div>
+    <div class="scroll" id="ble-log-wrap"></div>
+  </div>
+  <div class="panel" id="ble-detail-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--purple);box-shadow:0 0 7px var(--purple)"></div>FRAME INSPECTOR
+      <span style="margin-left:auto"><button class="tbtn" onclick="if(selectedBle)openLabelModal(selectedBle)" title="Assign owner label to selected device">👤 LABEL</button></span>
+    </div>
+    <div id="ble-detail-wrap"><div class="no-sel">← Click a device card to inspect decoded frames</div></div>
+  </div>
+  <div class="panel" id="ble-stats-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--mag);box-shadow:0 0 7px var(--mag)"></div>BLE STATS</div>
+    <div id="ble-stats-inner">
+      <div class="sr"><span class="sk">DEVICES</span><span class="sv" id="bs-total" style="color:var(--cyan)">0</span></div>
+      <div class="sr"><span class="sk">NEARBY INFO</span><span class="sv" id="bs-ni" style="color:var(--cyan)">0</span></div>
+      <div class="sr"><span class="sk">NEARBY ACTION</span><span class="sv" id="bs-na" style="color:var(--yellow)">0</span></div>
+      <div class="sr"><span class="sk">AIRPODS</span><span class="sv" id="bs-ap" style="color:var(--blue)">0</span></div>
+      <div class="sr"><span class="sk">AIRDROP</span><span class="sv" id="bs-ad" style="color:var(--mag)">0</span></div>
+      <div class="sr"><span class="sk">HANDOFF</span><span class="sv" id="bs-hd" style="color:var(--green)">0</span></div>
+      <div class="sr"><span class="sk">HOTSPOT</span><span class="sv" id="bs-hs" style="color:var(--orange)">0</span></div>
+      <div class="sr"><span class="sk">FIND MY</span><span class="sv" id="bs-fm" style="color:var(--red)">0</span></div>
+      <div class="sr"><span class="sk">FRAMES</span><span class="sv" id="bs-fr" style="color:var(--dim)">0</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- TAB 5: SYSTEM -->
+<div class="tab-content" id="tab-system">
+  <div class="panel" id="sys-meta-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--cyan);box-shadow:0 0 7px var(--cyan)"></div>SYSTEM
+      <span style="margin-left:auto"><button class="tbtn" onclick="loadSystemInfo()">↻ REFRESH</button></span>
+    </div>
+    <div id="ble-stats-inner" style="padding:8px 12px">
+      <div class="sr"><span class="sk">HOSTNAME</span><span class="sv" id="sys-host" style="color:var(--cyan)">—</span></div>
+      <div class="sr"><span class="sk">OS</span><span class="sv" id="sys-os" style="color:var(--text);font-size:.55rem">—</span></div>
+      <div class="sr"><span class="sk">SCAN INTERVAL</span><span class="sv" id="sys-interval" style="color:var(--yellow)">—</span></div>
+      <div class="sr" style="margin-top:8px">
+        <span class="sk">INTERVAL</span>
+        <input type="range" id="interval-slider2" min="2" max="60" value="6"
+          style="flex:1;margin:0 8px;accent-color:var(--cyan)"
+          oninput="setScanInterval(this.value);$('sys-interval').textContent=this.value+'s'">
+        <span class="sv" style="min-width:28px;color:var(--yellow)">6s</span>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+        <button class="exp-btn" style="margin:0;flex:1" onclick="injectDemoBle()">🧪 Inject Demo BLE</button>
+        <button class="exp-btn" style="margin:0;flex:1" onclick="injectDemoWifi()">🧪 Inject Demo WiFi</button>
+        <button class="exp-btn" style="margin:0;flex:1" onclick="toggleDemo()">⚡ Toggle Demo Mode</button>
+      </div>
+    </div>
+  </div>
+  <div class="panel" id="sys-ifaces-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--green);box-shadow:0 0 7px var(--green)"></div>NETWORK INTERFACES</div>
+    <div class="scroll"><div id="sys-ifaces"><div class="no-sel">Loading…</div></div></div>
+  </div>
+  <div class="panel" id="sys-usb-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--mag);box-shadow:0 0 7px var(--mag)"></div>USB DEVICES</div>
+    <div class="scroll"><div id="sys-usb"><div class="no-sel">Loading…</div></div></div>
+  </div>
+</div>
+
+<!-- TAB 3: TIMELINE -->
+<div class="tab-content" id="tab-timeline">
+  <div class="panel" id="tl-wifi-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--cyan);box-shadow:0 0 7px var(--cyan)"></div>WIFI RSSI TIMELINE (top 8)</div>
+    <canvas id="tl-wifi-canvas"></canvas>
+  </div>
+  <div class="panel" id="tl-ble-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--blue);box-shadow:0 0 7px var(--blue)"></div>BLE RSSI TIMELINE (top 8)</div>
+    <canvas id="tl-ble-canvas"></canvas>
+  </div>
+  <div class="panel" id="tl-act-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--yellow);box-shadow:0 0 7px var(--yellow)"></div>NEARBY ACTION HEATMAP</div>
+    <canvas id="tl-act-canvas"></canvas>
+  </div>
+  <div class="panel" id="tl-events-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--mag);box-shadow:0 0 7px var(--mag)"></div>UNIFIED EVENT LOG</div>
+    <div class="scroll" id="tl-events-wrap"></div>
+  </div>
+</div>
+
+<!-- TAB 4: ALERTS & EXPORT -->
+<div class="tab-content" id="tab-alerts">
+  <div class="panel" id="alert-list-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--red);box-shadow:0 0 7px var(--red)"></div>THREAT ALERTS
+      <span style="margin-left:auto"><button class="tbtn" onclick="clearAlerts()">✕ CLEAR</button></span>
+    </div>
+    <div class="scroll" id="alert-list"></div>
+  </div>
+  <div class="panel" id="export-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--green);box-shadow:0 0 7px var(--green)"></div>EXPORT DATA</div>
+    <div style="flex:1;overflow-y:auto;">
+      <div class="exp-section">WIFI</div>
+      <button class="exp-btn" onclick="dl('/export/wifi.json')">⬇ WiFi Scan → JSON</button>
+      <button class="exp-btn" onclick="dl('/export/wifi.csv')">⬇ WiFi Scan → CSV</button>
+      <div class="exp-section">BLE</div>
+      <button class="exp-btn" onclick="dl('/export/ble.json')">⬇ BLE Devices → JSON</button>
+      <div class="exp-section">EVENTS</div>
+      <button class="exp-btn" onclick="dl('/export/events.json')">⬇ All Events → JSON</button>
+      <button class="exp-btn" onclick="exportEventsCSV()">⬇ Events → CSV (browser)</button>
+      <div class="exp-section">SNAPSHOT</div>
+      <button class="exp-btn" onclick="copySnapshot()">📋 Copy Full Snapshot → Clipboard</button>
+    </div>
+  </div>
+</div>
+
+</div><!-- #body -->
+
+<!-- MODAL -->
+<div id="modal-overlay" onclick="closeModal(event)">
+  <div id="modal">
+    <button id="modal-close" onclick="closeModal()">✕</button>
+    <h2 id="modal-title">DETAILS</h2>
+    <div id="modal-body"></div>
+    <div id="modal-spark-wrap">
+      <div id="modal-spark-label">RSSI HISTORY</div>
+      <canvas id="modal-spark-cv" height="44"></canvas>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<!-- OWNER LABEL MODAL -->
+<div id="lbl-modal" class="lbl-overlay" onclick="if(event.target===this)closeLabelModal()">
+  <div class="lbl-box">
+    <div class="lbl-title">👤 Assign Owner Label</div>
+    <div class="lbl-row"><span class="lbl-k">MAC</span><code id="lbl-addr" class="lbl-v"></code></div>
+    <div class="lbl-row"><span class="lbl-k">PREFIX</span><code id="lbl-prefix" class="lbl-v" style="color:var(--dim)"></code></div>
+    <div class="lbl-row" style="margin-top:10px">
+      <input id="lbl-input" class="lbl-input" placeholder="e.g. Brother, Mom, Me…" />
+    </div>
+    <div style="margin:6px 0 4px;font-size:.58rem;color:var(--dim)">QUICK PICK</div>
+    <div id="lbl-quickpicks" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px"></div>
+    <div style="margin-bottom:10px;font-size:.6rem;color:var(--dim)">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="radio" name="lbl-scope" id="lbl-scope-mac" value="mac" checked> This MAC only
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer">
+        <input type="radio" name="lbl-scope" id="lbl-scope-prefix" value="prefix"> All devices with prefix <code id="lbl-prefix2"></code>
+      </label>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="lbl-save" onclick="saveLabelModal()">SAVE</button>
+      <button class="lbl-clear" onclick="document.getElementById('lbl-input').value='';saveLabelModal()">CLEAR</button>
+      <button class="lbl-cancel" onclick="closeLabelModal()">CANCEL</button>
+    </div>
+  </div>
+</div>
+<div id="theme-picker">
+  <div class="tpopt sel" data-theme="">CYBER</div>
+  <div class="tpopt" data-theme="theme-matrix">MATRIX</div>
+  <div class="tpopt" data-theme="theme-amber">AMBER</div>
+  <div class="tpopt" data-theme="theme-ice">ICE</div>
+  <div class="tpopt" data-theme="theme-light">LIGHT</div>
+  <div class="tpopt" data-theme="theme-neon">NEON</div>
+  <div class="tpopt" data-theme="theme-stealth">STEALTH</div>
+</div>
+
+
+<script src="db-core.js"></script>
+<script src="db-panels.js"></script>
+<script src="db-wifi.js"></script>
+<script src="db-ble.js"></script>
+<script src="db-charts.js"></script>
+</body>
+</html>

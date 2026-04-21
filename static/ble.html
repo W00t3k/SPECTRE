@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>🍎 Apple Continuity BLE Scanner</title>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+:root{
+  --bg:#05050f;--panel:#080d1a;--border:#0e1f30;
+  --cyan:#00ffc8;--mag:#ff0096;--yellow:#ffe000;
+  --green:#00ff88;--red:#ff4444;--blue:#3399ff;--orange:#ff8800;
+  --text:#b4c8dc;--dim:#3a4a5a;--white:#e8f0ff;
+  --font:'Courier New',Courier,monospace;
+}
+html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--font);}
+body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.07) 2px,rgba(0,0,0,.07) 4px);}
+
+/* ── Top bar ── */
+#topbar{height:52px;background:var(--panel);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 16px;gap:12px;
+  box-shadow:0 2px 20px rgba(0,255,200,.06);}
+#title{font-size:1.05rem;font-weight:bold;letter-spacing:.1em;
+  color:var(--cyan);text-shadow:0 0 14px var(--cyan);white-space:nowrap;}
+.badge{font-size:.62rem;padding:3px 8px;border-radius:3px;border:1px solid;
+  letter-spacing:.06em;white-space:nowrap;}
+.bg{color:var(--green);border-color:var(--green);background:rgba(0,255,136,.07);}
+.bc{color:var(--cyan);border-color:var(--cyan);background:rgba(0,255,200,.07);}
+.bm{color:var(--mag);border-color:var(--mag);background:rgba(255,0,150,.07);}
+.bd{color:var(--dim);border-color:var(--dim);}
+.br{color:var(--red);border-color:var(--red);background:rgba(255,68,68,.08);
+  animation:rpulse 1.2s ease-in-out infinite;}
+@keyframes rpulse{0%,100%{box-shadow:0 0 5px rgba(255,68,68,.3);}50%{box-shadow:0 0 14px rgba(255,68,68,.8);}}
+#sp{flex:1;}
+.btn{background:transparent;border:1px solid var(--cyan);color:var(--cyan);
+  font-family:var(--font);font-size:.62rem;padding:3px 10px;
+  border-radius:3px;cursor:pointer;transition:background .2s;letter-spacing:.06em;}
+.btn:hover{background:rgba(0,255,200,.1);}
+
+/* ── Layout ── */
+#root{display:flex;flex-direction:column;height:calc(100vh - 52px);}
+#content{flex:1;display:grid;overflow:hidden;
+  grid-template-columns:1fr 300px;
+  grid-template-rows:1fr 200px;
+  gap:5px;padding:5px;}
+
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:4px;
+  display:flex;flex-direction:column;overflow:hidden;
+  box-shadow:inset 0 0 30px rgba(0,0,0,.4);}
+.ptitle{font-size:.68rem;letter-spacing:.1em;color:var(--cyan);
+  padding:6px 10px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:7px;flex-shrink:0;}
+.dot{width:7px;height:7px;border-radius:50%;
+  animation:pulse 1.6s ease-in-out infinite;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+
+/* ── Device grid ── */
+#devices-panel{grid-row:1;grid-column:1;overflow:hidden;}
+#devices-wrap{flex:1;overflow-y:auto;overflow-x:hidden;padding:6px;}
+#devices-wrap::-webkit-scrollbar{width:4px;}
+#devices-wrap::-webkit-scrollbar-thumb{background:var(--dim);border-radius:3px;}
+#devices-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px;}
+
+.dev-card{background:#050a14;border:1px solid var(--border);border-radius:5px;
+  padding:10px 12px;cursor:pointer;transition:border-color .2s,box-shadow .2s;
+  position:relative;overflow:hidden;}
+.dev-card:hover{border-color:var(--cyan);box-shadow:0 0 12px rgba(0,255,200,.15);}
+.dev-card.selected{border-color:var(--cyan);box-shadow:0 0 16px rgba(0,255,200,.25);}
+.dev-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;}
+.dev-card.type-nearby-info::before{background:var(--cyan);}
+.dev-card.type-nearby-action::before{background:var(--yellow);}
+.dev-card.type-airpods::before{background:var(--blue);}
+.dev-card.type-airdrop::before{background:var(--mag);}
+.dev-card.type-handoff::before{background:var(--green);}
+.dev-card.type-hotspot::before{background:var(--orange);}
+.dev-card.type-findmy::before{background:var(--red);}
+.dev-card.type-other::before{background:var(--dim);}
+
+.card-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;}
+.card-name{font-size:.82rem;font-weight:bold;color:var(--white);}
+.card-rssi{font-size:.72rem;font-weight:bold;}
+.card-addr{font-size:.6rem;color:var(--dim);margin-bottom:6px;}
+.card-tags{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;}
+.tag{font-size:.58rem;padding:2px 6px;border-radius:2px;border:1px solid;letter-spacing:.04em;}
+.tag-cyan  {color:var(--cyan);border-color:var(--cyan);background:rgba(0,255,200,.08);}
+.tag-blue  {color:var(--blue);border-color:var(--blue);background:rgba(51,153,255,.08);}
+.tag-yellow{color:var(--yellow);border-color:var(--yellow);background:rgba(255,224,0,.08);}
+.tag-mag   {color:var(--mag);border-color:var(--mag);background:rgba(255,0,150,.08);}
+.tag-green {color:var(--green);border-color:var(--green);background:rgba(0,255,136,.08);}
+.tag-orange{color:var(--orange);border-color:var(--orange);background:rgba(255,136,0,.08);}
+.tag-red   {color:var(--red);border-color:var(--red);background:rgba(255,68,68,.08);}
+.tag-dim   {color:var(--dim);border-color:var(--dim);}
+.card-detail{font-size:.62rem;color:var(--text);line-height:1.5;}
+.card-detail span{color:var(--dim);}
+.card-ts{font-size:.58rem;color:var(--dim);margin-top:4px;}
+.card-new{animation:newcard .8s ease-out;}
+@keyframes newcard{from{background:rgba(0,255,200,.1);}to{background:#050a14;}}
+
+/* ── Event log ── */
+#log-panel{grid-row:1;grid-column:2;}
+#log-wrap{flex:1;overflow-y:auto;padding:3px 0;}
+#log-wrap::-webkit-scrollbar{width:3px;}
+#log-wrap::-webkit-scrollbar-thumb{background:var(--dim);}
+.log-entry{font-size:.58rem;padding:3px 8px;border-bottom:1px solid rgba(14,31,48,.5);
+  display:grid;grid-template-columns:52px 1fr;gap:4px;}
+.log-ts{color:var(--dim);}
+.log-type-NearbyInfo{color:var(--cyan);}
+.log-type-NearbyAction{color:var(--yellow);}
+.log-type-ProximityPairing{color:var(--blue);}
+.log-type-AirDrop{color:var(--mag);}
+.log-type-Handoff{color:var(--green);}
+.log-type-FindMy{color:var(--red);}
+.log-type-default{color:var(--text);}
+
+/* ── Detail panel ── */
+#detail-panel{grid-row:2;grid-column:1;}
+#detail-wrap{flex:1;overflow-y:auto;padding:6px 10px;}
+#detail-wrap::-webkit-scrollbar{width:4px;}
+#detail-wrap::-webkit-scrollbar-thumb{background:var(--dim);}
+.detail-row{display:flex;gap:8px;padding:3px 0;border-bottom:1px solid rgba(14,31,48,.6);font-size:.7rem;}
+.dk{color:var(--dim);min-width:140px;flex-shrink:0;}
+.dv{color:var(--white);word-break:break-all;}
+.dv-hex{color:var(--dim);font-size:.62rem;}
+.no-select{color:var(--dim);font-size:.72rem;padding:10px;}
+
+/* ── Stats ── */
+#stats-panel{grid-row:2;grid-column:2;}
+#stats-inner{flex:1;display:flex;flex-direction:column;justify-content:space-evenly;padding:5px 12px;}
+.sr{display:flex;justify-content:space-between;font-size:.65rem;}
+.sk{color:var(--dim);}
+.sv{font-weight:bold;font-size:.78rem;}
+
+/* ── Canvas bg ── */
+#bg-canvas{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.18;}
+#topbar,#root{position:relative;z-index:1;}
+</style>
+</head>
+<body>
+<canvas id="bg-canvas"></canvas>
+
+<div id="topbar">
+  <div id="title">🍎 APPLE CONTINUITY SCANNER</div>
+  <div class="badge bg"  id="status-b">● CONNECTING…</div>
+  <div class="badge bc"  id="count-b">DEVICES: 0</div>
+  <div class="badge bm"  id="frame-b">FRAMES: 0</div>
+  <div class="badge bd"  id="ts-b">--:--:--</div>
+  <div id="sp"></div>
+  <button class="btn" onclick="clearDevices()">✕ CLEAR</button>
+  <div id="clock" class="badge bd">--:--:--</div>
+</div>
+
+<div id="root">
+  <div id="content">
+
+    <div class="panel" id="devices-panel">
+      <div class="ptitle">
+        <div class="dot" style="background:var(--cyan);box-shadow:0 0 8px var(--cyan);"></div>
+        LIVE APPLE DEVICES
+        <span style="margin-left:auto;font-size:.58rem;color:var(--dim);">click card to inspect</span>
+      </div>
+      <div id="devices-wrap"><div id="devices-grid"></div></div>
+    </div>
+
+    <div class="panel" id="log-panel">
+      <div class="ptitle">
+        <div class="dot" style="background:var(--yellow);box-shadow:0 0 8px var(--yellow);"></div>
+        CONTINUITY EVENTS
+      </div>
+      <div id="log-wrap"></div>
+    </div>
+
+    <div class="panel" id="detail-panel">
+      <div class="ptitle">
+        <div class="dot" style="background:var(--blue);box-shadow:0 0 8px var(--blue);"></div>
+        FRAME INSPECTOR
+      </div>
+      <div id="detail-wrap"><div class="no-select">← Click a device card to inspect frames</div></div>
+    </div>
+
+    <div class="panel" id="stats-panel">
+      <div class="ptitle">
+        <div class="dot" style="background:var(--mag);box-shadow:0 0 8px var(--mag);"></div>
+        STATS
+      </div>
+      <div id="stats-inner">
+        <div class="sr"><span class="sk">TOTAL DEVICES</span> <span class="sv" id="st-total" style="color:var(--cyan)">0</span></div>
+        <div class="sr"><span class="sk">NEARBY INFO</span>   <span class="sv" id="st-ni"    style="color:var(--cyan)">0</span></div>
+        <div class="sr"><span class="sk">NEARBY ACTION</span> <span class="sv" id="st-na"    style="color:var(--yellow)">0</span></div>
+        <div class="sr"><span class="sk">AIRPODS</span>       <span class="sv" id="st-ap"    style="color:var(--blue)">0</span></div>
+        <div class="sr"><span class="sk">AIRDROP</span>       <span class="sv" id="st-ad"    style="color:var(--mag)">0</span></div>
+        <div class="sr"><span class="sk">HANDOFF</span>       <span class="sv" id="st-hd"    style="color:var(--green)">0</span></div>
+        <div class="sr"><span class="sk">HOTSPOT</span>       <span class="sv" id="st-hs"    style="color:var(--orange)">0</span></div>
+        <div class="sr"><span class="sk">FIND MY</span>       <span class="sv" id="st-fm"    style="color:var(--red)">0</span></div>
+        <div class="sr"><span class="sk">TOTAL FRAMES</span>  <span class="sv" id="st-fr"    style="color:var(--dim)">0</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+function esc(s){const d=document.createElement('div');d.textContent=String(s??'');return d.innerHTML;}
+function elapsed(ts){const s=Math.round(Date.now()/1000-ts);if(s<5)return'just now';if(s<60)return s+'s ago';return Math.floor(s/60)+'m ago';}
+function fmtTime(){return new Date().toTimeString().slice(0,8);}
+function rssiColor(r){if(r>=-55)return'var(--green)';if(r>=-70)return'var(--yellow)';return'var(--red)';}
+
+let selectedAddr=null, allDevices=[], totalFrames=0;
+
+// ── Particles ──────────────────────────────────────────────────────────
+const bgc=$('bg-canvas'), bgx=bgc.getContext('2d');
+const PARTS=Array.from({length:50},()=>({
+  x:Math.random()*innerWidth,y:Math.random()*innerHeight,
+  vx:(Math.random()-.5)*.12,vy:(Math.random()-.5)*.12,
+  r:Math.random()*1.3+.4,a:Math.random()
+}));
+function drawParts(){
+  bgc.width=innerWidth;bgc.height=innerHeight;
+  bgx.clearRect(0,0,bgc.width,bgc.height);
+  for(const p of PARTS){
+    p.x=(p.x+p.vx+bgc.width)%bgc.width;
+    p.y=(p.y+p.vy+bgc.height)%bgc.height;
+    bgx.beginPath();bgx.arc(p.x,p.y,p.r,0,Math.PI*2);
+    bgx.fillStyle=`rgba(0,255,200,${p.a*0.3})`;bgx.fill();
+  }
+  requestAnimationFrame(drawParts);
+}
+drawParts();
+
+// ── Clock ──────────────────────────────────────────────────────────────
+setInterval(()=>{$('clock').textContent=fmtTime();},1000);
+
+// ── Socket ─────────────────────────────────────────────────────────────
+const socket=io();
+socket.on('connect',()=>{
+  $('status-b').textContent='● SCANNING';
+  $('status-b').className='badge bg';
+});
+socket.on('disconnect',()=>{
+  $('status-b').textContent='○ OFFLINE';
+  $('status-b').className='badge bd';
+});
+socket.on('ble_update',data=>{
+  allDevices=data.devices||[];
+  $('ts-b').textContent=data.ts||'--:--:--';
+  renderDevices();
+  renderLog(data.events||[]);
+  updateStats();
+});
+function clearDevices(){socket.emit('clear');}
+
+// ── Tag helpers ────────────────────────────────────────────────────────
+function frameTypeClass(frames){
+  const types=(frames||[]).map(f=>f.type_id);
+  if(types.includes(0x07)) return 'type-airpods';
+  if(types.includes(0x10)) return 'type-nearby-info';
+  if(types.includes(0x0f)) return 'type-nearby-action';
+  if(types.includes(0x05)) return 'type-airdrop';
+  if(types.includes(0x0c)) return 'type-handoff';
+  if(types.includes(0x0d)||types.includes(0x0e)) return 'type-hotspot';
+  if(types.includes(0x12)) return 'type-findmy';
+  return 'type-other';
+}
+
+function frameTags(frames){
+  return (frames||[]).map(f=>{
+    const id=f.type_id;
+    let cls='tag-dim';
+    if(id===0x10) cls='tag-cyan';
+    else if(id===0x0f) cls='tag-yellow';
+    else if(id===0x07) cls='tag-blue';
+    else if(id===0x05) cls='tag-mag';
+    else if(id===0x0c) cls='tag-green';
+    else if(id===0x0d||id===0x0e) cls='tag-orange';
+    else if(id===0x12) cls='tag-red';
+    return `<span class="tag ${cls}">${esc(f.type)}</span>`;
+  }).join('');
+}
+
+function frameDetail(frames){
+  if(!frames||!frames.length) return '';
+  const f=frames[0];
+  const id=f.type_id;
+  const parts=[];
+  if(id===0x10){
+    parts.push(`<span>Activity</span> ${esc(f.activity||'?')}`);
+    if(f.ios_version) parts.push(`<span>iOS</span> ${esc(f.ios_version)}`);
+    if(f.wifi_on!==undefined) parts.push(`<span>WiFi</span> ${f.wifi_on?'On':'Off'}`);
+    if(f.airdrop_enabled!==undefined) parts.push(`<span>AirDrop</span> ${f.airdrop_enabled?'On':'Off'}`);
+  } else if(id===0x0f){
+    parts.push(`<span>Action</span> ${esc(f.action||'?')}`);
+  } else if(id===0x07){
+    parts.push(`<span>Model</span> ${esc(f.model||'?')}`);
+    if(f.left_bat) parts.push(`L:${esc(f.left_bat)} R:${esc(f.right_bat)}`);
+  } else if(id===0x05){
+    parts.push(`<span>AppleID hash</span> ${esc(f.apple_id||'?')}`);
+  } else if(id===0x0c){
+    parts.push(`<span>Handoff seq</span> ${esc(f.sequence||'?')}`);
+  } else if(f.note){
+    parts.push(esc(f.note));
+  }
+  return parts.join(' &nbsp;·&nbsp; ');
+}
+
+// ── Render devices ─────────────────────────────────────────────────────
+function renderDevices(){
+  const grid=$('devices-grid');
+  const sorted=[...allDevices].sort((a,b)=>b.rssi-a.rssi);
+  const existingCards={};
+  for(const el of grid.children) existingCards[el.dataset.addr]=el;
+
+  const seen=new Set();
+  totalFrames=0;
+  for(const dev of sorted){
+    totalFrames+=dev.frame_count||0;
+    seen.add(dev.addr);
+    const tclass=frameTypeClass(dev.frames);
+    const tags=frameTags(dev.frames);
+    const detail=frameDetail(dev.frames);
+    const rcolor=rssiColor(dev.rssi);
+    const isSel=dev.addr===selectedAddr;
+
+    let card=existingCards[dev.addr];
+    if(!card){
+      card=document.createElement('div');
+      card.dataset.addr=dev.addr;
+      card.className=`dev-card ${tclass}${isSel?' selected':''}`;
+      card.onclick=()=>selectDevice(dev.addr);
+      card.classList.add('card-new');
+      grid.appendChild(card);
+    } else {
+      card.className=`dev-card ${tclass}${isSel?' selected':''}`;
+    }
+
+    card.innerHTML=`
+      <div class="card-header">
+        <div class="card-name">${esc(dev.name)}</div>
+        <div class="card-rssi" style="color:${rcolor}">${dev.rssi} dBm</div>
+      </div>
+      <div class="card-addr">${esc(dev.addr)}</div>
+      <div class="card-tags">${tags}</div>
+      <div class="card-detail">${detail}</div>
+      <div class="card-ts">Frames: ${dev.frame_count||0} · ${elapsed(dev.last_seen)}</div>
+    `;
+  }
+  for(const [addr,el] of Object.entries(existingCards)){
+    if(!seen.has(addr)) grid.removeChild(el);
+  }
+
+  $('count-b').textContent=`DEVICES: ${allDevices.length}`;
+  $('frame-b').textContent=`FRAMES: ${totalFrames}`;
+}
+
+// ── Select + inspect ───────────────────────────────────────────────────
+function selectDevice(addr){
+  selectedAddr=addr;
+  renderDevices();
+  const dev=allDevices.find(d=>d.addr===addr);
+  if(!dev){$('detail-wrap').innerHTML='<div class="no-select">Not found</div>';return;}
+
+  let html='';
+  html+=`<div class="detail-row"><span class="dk">DEVICE NAME</span><span class="dv">${esc(dev.name)}</span></div>`;
+  html+=`<div class="detail-row"><span class="dk">ADDRESS</span><span class="dv">${esc(dev.addr)}</span></div>`;
+  html+=`<div class="detail-row"><span class="dk">RSSI</span><span class="dv" style="color:${rssiColor(dev.rssi)}">${dev.rssi} dBm</span></div>`;
+  html+=`<div class="detail-row"><span class="dk">FRAME COUNT</span><span class="dv">${dev.frame_count||0}</span></div>`;
+  html+=`<div class="detail-row"><span class="dk">RAW MFR DATA</span><span class="dv dv-hex">${esc(dev.raw_hex||'')}</span></div>`;
+
+  for(const f of (dev.frames||[])){
+    html+=`<div class="detail-row" style="margin-top:6px;border-top:1px solid var(--cyan);padding-top:4px;">
+      <span class="dk" style="color:var(--cyan)">▶ ${esc(f.type)}</span><span class="dv dv-hex">type=0x${f.type_id.toString(16).padStart(2,'0')}</span></div>`;
+    for(const [k,v] of Object.entries(f)){
+      if(['type_id','type','raw'].includes(k)) continue;
+      html+=`<div class="detail-row"><span class="dk">&nbsp;&nbsp;${esc(k.toUpperCase())}</span><span class="dv">${esc(String(v))}</span></div>`;
+    }
+    html+=`<div class="detail-row"><span class="dk">&nbsp;&nbsp;RAW PAYLOAD</span><span class="dv dv-hex">${esc(f.raw)}</span></div>`;
+  }
+  $('detail-wrap').innerHTML=html;
+}
+
+// ── Event log ──────────────────────────────────────────────────────────
+function renderLog(events){
+  const wrap=$('log-wrap');
+  wrap.innerHTML='';
+  for(const ev of events){
+    const typeKey=ev.type.replace(/\s/g,'');
+    const cls=`log-type-${typeKey}`;
+    const div=document.createElement('div');
+    div.className='log-entry';
+    div.innerHTML=`<span class="log-ts">${esc(ev.ts)}</span><span class="${cls}">[${esc(ev.type)}] ${esc(ev.name)} ${esc(ev.detail)}</span>`;
+    wrap.appendChild(div);
+  }
+}
+
+// ── Stats ──────────────────────────────────────────────────────────────
+function updateStats(){
+  const devs=allDevices;
+  const hasType=(id)=>devs.filter(d=>(d.frames||[]).some(f=>f.type_id===id)).length;
+  $('st-total').textContent=devs.length;
+  $('st-ni').textContent=hasType(0x10);
+  $('st-na').textContent=hasType(0x0f);
+  $('st-ap').textContent=hasType(0x07);
+  $('st-ad').textContent=hasType(0x05);
+  $('st-hd').textContent=hasType(0x0c);
+  $('st-hs').textContent=devs.filter(d=>(d.frames||[]).some(f=>f.type_id===0x0d||f.type_id===0x0e)).length;
+  $('st-fm').textContent=hasType(0x12);
+  $('st-fr').textContent=totalFrames;
+}
+</script>
+</body>
+</html>
