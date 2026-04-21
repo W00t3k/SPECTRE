@@ -44,6 +44,10 @@ socket.on('connect',()=>{$('status-b').textContent='● LIVE';$('status-b').clas
 socket.on('disconnect',()=>{$('status-b').textContent='○ OFFLINE';$('status-b').className='badge bd';});
 socket.on('alert',al=>showToast(al));
 socket.on('interval_ack',d=>{const el=$('interval-val');if(el)el.textContent=d.interval+'s';});
+socket.on('mute_state',d=>{
+  const btn=$('mute-btn');
+  if(btn){btn.textContent=d.muted?'🔕 MUTED':'🔔 NOTIF';btn.style.opacity=d.muted?'0.5':'1';}
+});
 socket.on('update',data=>{
   const prevW=new Set(Object.keys(wifiNets));
   wifiNets={}; for(const n of (data.wifi||[])) wifiNets[n.bssid]=n;
@@ -78,6 +82,9 @@ socket.on('update',data=>{
 function toggleDemo(){
   socket.emit('toggle_demo');
   showToast({kind:'DEMO',name:'Demo mode',detail:'toggled'});
+}
+function toggleMute(){
+  socket.emit('toggle_mute');
 }
 function injectDemoBle(){socket.emit('inject_demo_ble');showToast({kind:'INJECT',name:'Demo BLE',detail:'loaded'});}
 function injectDemoWifi(){socket.emit('inject_demo_wifi');showToast({kind:'INJECT',name:'Demo WiFi',detail:'loaded'});}

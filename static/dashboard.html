@@ -25,6 +25,7 @@
   <button class="tbtn" onclick="clearAlerts()" title="Clear alerts">✕ ALERTS</button>
   <button class="tbtn" onclick="injectDemoBle()" title="Load demo BLE devices">🧪 DEMO BLE</button>
   <button class="tbtn" onclick="toggleDemo()" title="Toggle demo/live mode">⚡ DEMO</button>
+  <button class="tbtn" id="mute-btn" onclick="toggleMute()" title="Mute/unmute macOS notifications">🔔 NOTIF</button>
   <span class="tbtn" style="cursor:default;border-color:var(--dim);color:var(--dim)">SCAN <span id="interval-val">6s</span></span>
   <input id="interval-slider" type="range" min="2" max="60" value="6" style="width:60px;accent-color:var(--cyan)" oninput="setScanInterval(this.value)" title="WiFi scan interval">
   <button class="tbtn" onclick="resetLayout()" title="Reset panel positions">⊞ RESET</button>

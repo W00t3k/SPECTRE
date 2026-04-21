@@ -25,6 +25,8 @@ import random
 import platform
 from flask import Flask, send_from_directory, jsonify, Response
 from flask_socketio import SocketIO, emit
+from core.identity import record_device, get_all_identities, get_identity_timeline, get_identity_hashes, set_identity_label, get_stats as identity_stats
+from core.fingerprint import DeviceCorrelator
 from core.apple_ble_tables import (
     APPLE_MFR, MSG_TYPES, NEARBY_ACTIONS, NEARBY_INFO_ACTIONS, PHONE_STATES,
     AIRPODS_MODELS, AIRPODS_STATUS, AIRPODS_COLORS, HOMEKIT_CATEGORY,
@@ -67,6 +69,8 @@ _alerts        = []   # alert log (max 50)
 _wifi_history  = {}   # bssid → [(ts, rssi), ...]  (last 60 samples)
 _ble_history   = {}   # addr  → [(ts, rssi), ...]
 _demo_mode     = False
+_correlator    = DeviceCorrelator()
+_notif_muted   = False   # mute macOS notifications via GUI or CLI
 
 MAX_HISTORY = 60   # samples per device
 
@@ -116,7 +120,9 @@ def _sanitise_notif(s):
     return _SAFE_NOTIF.sub('', str(s))[:80]
 
 def _notify_macos(title, subtitle, body):
-    """Fire a native macOS notification via osascript."""
+    """Fire a native macOS notification via osascript (respects _notif_muted)."""
+    if _notif_muted:
+        return
     try:
         t = _sanitise_notif(title)
         s = _sanitise_notif(subtitle)
@@ -310,19 +316,40 @@ def _on_ble_adv(device: BLEDevice, adv: AdvertisementData):
 
         _ble_devices[addr] = entry
 
+    # Identity engine — runs outside _lock
+    identity = record_device(addr, name, rssi, frames)
+    # Attach fp_id back to the live device entry
+    with _lock:
+        if addr in _ble_devices:
+            _ble_devices[addr]["fp_id"]      = identity["fp_id"]
+            _ble_devices[addr]["threat"]     = identity["threat"]
+            _ble_devices[addr]["seen_total"] = identity["seen_count"]
+            _ble_devices[addr]["label"]      = identity["label"]
+
     # All _add_event / _add_alert calls happen outside _lock
     if is_new:
         desc = ", ".join(f["type"] for f in frames)
         _add_event("BLE_NEW", "BLE", name, desc, rssi)
+        # Re-appearance alert — only MEDIUM/HIGH or real named devices
+        _GENERIC = {"Find My Accessory","Apple Device","Handoff","AirDrop",
+                    "Nearby Action","iPhone Tethering","iPhone Hotspot"}
+        if identity["is_return"] and (identity["threat"] != "LOW" or name not in _GENERIC):
+            _add_alert("👁 KNOWN DEVICE RETURNED",
+                       name,
+                       f"Seen {identity['seen_count']}x  •  Threat: {identity['threat']}")
         for f in frames:
             if f["type_id"] == 0x05:
-                _add_alert("📡 AirDrop Detected", name,
-                           f"Hashes: apple_id={f.get('apple_id','?')} ph={f.get('phone','?')}")
+                hashes = identity.get("hashes", [])
+                h_str = "  ".join(f"{h['type']}: {h['hash']}" for h in hashes)
+                _add_alert("📡 AirDrop Detected", name, h_str or "Hashes captured")
             elif f["type_id"] == 0x0f and f.get("action") == "WiFi Password Share":
                 _add_alert("🔑 WiFi Password Share", name, "Device offering WiFi credentials")
             elif f["type_id"] == 0x0d:
                 _add_alert("📶 Hotspot Detected", name,
                            f"Battery: {f.get('battery','?')}%")
+        if identity["threat"] == "HIGH":
+            _add_alert("🎯 HIGH-VALUE TARGET", name,
+                       "AirDrop hashes captured  •  run: python tools/rainbow.py <hash>")
     elif new_frame_types - old_frames:
         added = ", ".join(MSG_TYPES.get(t, f"0x{t:02x}") for t in (new_frame_types - old_frames))
         _add_event("BLE_UPD", "BLE", name, f"New: {added}", rssi)
@@ -612,6 +639,44 @@ def api_system_info():
     return jsonify(_get_system_info())
 
 
+# ── Identity Engine API ──────────────────────────────────────────────────────
+@app.route("/api/identities")
+def api_identities():
+    return jsonify({
+        "stats":      identity_stats(),
+        "identities": get_all_identities(200),
+    })
+
+
+@app.route("/api/identities/<fp_id>")
+def api_identity_detail(fp_id):
+    return jsonify({
+        "timeline": get_identity_timeline(fp_id, 100),
+        "hashes":   get_identity_hashes(fp_id),
+    })
+
+
+@app.route("/api/identities/<fp_id>/label", methods=["POST"])
+def api_identity_label(fp_id):
+    from flask import request as flask_request
+    body = flask_request.get_json(force=True) or {}
+    label = str(body.get("label", ""))[:64]
+    set_identity_label(fp_id, label)
+    with _lock:
+        for dev in _ble_devices.values():
+            if dev.get("fp_id") == fp_id:
+                dev["label"] = label
+    return jsonify({"ok": True})
+
+
+@app.route("/api/correlate")
+def api_correlate():
+    with _lock:
+        devs = dict(_ble_devices)
+    clusters = _correlator.correlate(devs)
+    return jsonify({"clusters": clusters})
+
+
 _start_time = time.time()
 
 @app.route("/api/status")
@@ -658,6 +723,7 @@ def api_emit():
         "clear_ble":       on_clear_ble,
         "clear_events":    on_clear_events,
         "clear_alerts":    on_clear_alerts,
+        "toggle_mute":     on_toggle_mute,
     }
     if event == "set_interval":
         global WIFI_SCAN_INTERVAL
@@ -765,6 +831,13 @@ def on_set_interval(data):
     except Exception:
         pass
     emit("interval_ack", {"interval": WIFI_SCAN_INTERVAL})
+
+
+@socketio.on("toggle_mute")
+def on_toggle_mute():
+    global _notif_muted
+    _notif_muted = not _notif_muted
+    socketio.emit("mute_state", {"muted": _notif_muted})
 
 
 @socketio.on("toggle_demo")

@@ -2,6 +2,7 @@
 // DRAGGABLE / RESIZABLE PANELS
 // ══════════════════════════════════════════════════════
 const PANEL_LAYOUTS={}; // panelId -> {x,y,w,h}
+const _hiddenPanels=new Set();
 function initPanel(panel){
   const id=panel.id;
   if(!panel.querySelector('.resize-grip')){
@@ -15,7 +16,11 @@ function initPanel(panel){
     btn.title='Collapse/Expand';
     btn.onclick=e=>{e.stopPropagation();const c=panel.classList.toggle('collapsed');btn.textContent=c?'+':'−';};
     pt.appendChild(btn);
-    pt.addEventListener('mousedown',e=>{if(e.target===btn)return;startDrag(e,panel);});
+    const xbtn=document.createElement('button');xbtn.className='panel-close-btn';xbtn.textContent='✕';
+    xbtn.title='Hide panel (⊞ RESET to restore)';
+    xbtn.onclick=e=>{e.stopPropagation();panel.style.display='none';_hiddenPanels.add(panel.id);};
+    pt.appendChild(xbtn);
+    pt.addEventListener('mousedown',e=>{if(e.target===btn||e.target===xbtn)return;startDrag(e,panel);});
   }
   const saved=PANEL_LAYOUTS[id];
   if(saved){panel.style.left=saved.x+'px';panel.style.top=saved.y+'px';
@@ -139,6 +144,8 @@ function setFiltPill(id){
 
 function resetLayout(){
   for(const k of Object.keys(PANEL_LAYOUTS))delete PANEL_LAYOUTS[k];
+  _hiddenPanels.forEach(id=>{const p=$(id);if(p)p.style.display='';});
+  _hiddenPanels.clear();
   for(const tabId of Object.keys(DEFAULT_LAYOUTS))applyDefaultLayout(tabId,true);
   resizeAll();
 }

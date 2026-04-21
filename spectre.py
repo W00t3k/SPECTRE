@@ -447,6 +447,12 @@ def cmd_watch(args):
         ok("Watch stopped.")
 
 
+def cmd_mute_notif(args):
+    """Toggle macOS notification mute on the running server."""
+    _post_socket(args.host, args.port, "toggle_mute")
+    ok("Notification mute toggled. Check the 🔔/🔕 button in the dashboard topbar.")
+
+
 # ─── /api/status  +  /api/emit  — add these to combined_server.py ─────────────
 # (the CLI calls these REST endpoints)
 
@@ -527,6 +533,9 @@ def build_parser():
     pw = sub.add_parser("watch", help="Live-tail events from the running server")
     pw.add_argument("--interval", "-n", type=float, default=2.0, help="Poll interval in seconds")
 
+    # mute-notif
+    sub.add_parser("mute-notif", help="Toggle macOS notification mute on running server")
+
     return p
 
 
@@ -557,6 +566,7 @@ def main():
         "scan":         cmd_scan,
         "monitor":      cmd_monitor,
         "watch":        cmd_watch,
+        "mute-notif":   cmd_mute_notif,
     }
     fn = dispatch.get(args.command)
     if fn:
