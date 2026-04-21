@@ -51,7 +51,7 @@ WIFI_SCAN_INTERVAL = 6   # seconds  (mutable at runtime via set_interval)
 app = Flask(__name__, static_folder=STATIC_DIR)
 app.config["SECRET_KEY"] = os.environ.get("SPECTRE_SECRET", os.urandom(32).hex())
 _API_TOKEN = os.environ.get("SPECTRE_TOKEN", "")  # optional: set to require CLI auth
-_CORS_ORIGIN = os.environ.get("SPECTRE_ORIGIN", "http://localhost:5003")
+_CORS_ORIGIN = os.environ.get("SPECTRE_ORIGIN", "*")  # lock down with SPECTRE_ORIGIN env var on untrusted networks
 socketio = SocketIO(app, cors_allowed_origins=_CORS_ORIGIN, async_mode="threading")
 
 # ═══════════════════════════════════════════════════════════════════════════
