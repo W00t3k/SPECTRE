@@ -117,8 +117,8 @@ function initAllPanels(){
 // ══════════════════════════════════════════════════════
 // THEME SWITCHER
 // ══════════════════════════════════════════════════════
-const THEMES=['theme-operator','theme-cyber','theme-matrix','theme-amber','theme-ice','theme-light','theme-neon','theme-stealth'];
-let _curTheme='theme-operator';
+const THEMES=['theme-spectrogram','theme-operator','theme-cyber','theme-matrix','theme-amber','theme-ice','theme-light','theme-neon','theme-stealth'];
+let _curTheme='theme-spectrogram';
 function toggleThemePicker(){
   $('theme-picker').classList.toggle('open');
 }

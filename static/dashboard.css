@@ -1,12 +1,19 @@
 *{margin:0;padding:0;box-sizing:border-box;}
 :root{
-  --bg:#060a04;--panel:#0a0f07;--border:#1a2e12;
-  --cyan:#39ff14;--mag:#a3ff4a;--yellow:#d4ff00;
-  --green:#39ff14;--red:#ff4422;--blue:#66cc44;--orange:#aadd00;--purple:#88ff44;
-  --text:#7aaa5a;--dim:#2a3d1a;--white:#cceebb;
+  --bg:#0b1320;--panel:#0d1b2e;--border:#122340;
+  --cyan:#4dd9f5;--mag:#ff8c42;--yellow:#f5e642;
+  --green:#44e8b0;--red:#ff4d6a;--blue:#5ab4e8;--orange:#ff8c42;--purple:#9b72f5;
+  --text:#7aadcc;--dim:#1e3550;--white:#c8e8f8;
   --font:'Courier New',Courier,monospace;
 }
-/* ── THEME: OPERATOR (default) ── */
+/* ── THEME: SPECTROGRAM (SciChart style) ── */
+body.theme-spectrogram{
+  --bg:#0b1320;--panel:#0d1b2e;--border:#122340;
+  --cyan:#4dd9f5;--mag:#ff8c42;--yellow:#f5e642;
+  --green:#44e8b0;--red:#ff4d6a;--blue:#5ab4e8;--orange:#ff8c42;--purple:#9b72f5;
+  --text:#7aadcc;--dim:#1e3550;--white:#c8e8f8;
+}
+/* ── THEME: OPERATOR ── */
 body.theme-operator{
   --bg:#060a04;--panel:#0a0f07;--border:#1a2e12;
   --cyan:#39ff14;--mag:#a3ff4a;--yellow:#d4ff00;
