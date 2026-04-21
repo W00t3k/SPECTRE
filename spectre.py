@@ -86,10 +86,14 @@ def _get(host, port, path, timeout=5):
 def _post_socket(host, port, event, data=None):
     """Fire a socket.io event via the simple HTTP socket.io REST shim we add below."""
     payload = json.dumps({"event": event, "data": data or {}}).encode()
+    headers = {"Content-Type": "application/json"}
+    token = os.environ.get("SPECTRE_TOKEN", "")
+    if token:
+        headers["X-SPECTRE-Token"] = token
     req = urllib.request.Request(
         _url(host, port, "/api/emit"),
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:
@@ -377,7 +381,11 @@ def cmd_monitor(args):
         err("Monitor mode management is Linux/Pi only.")
         err("On macOS, use: airport -z (disassociate) then airport sniff <channel>")
         sys.exit(1)
+    import re as _re
     iface = args.interface
+    if not _re.fullmatch(r'[a-zA-Z0-9]+', iface):
+        err(f"Invalid interface name '{iface}' — only alphanumeric characters allowed")
+        sys.exit(1)
     action = args.action
     if action == "start":
         info(f"Killing interfering processes...")

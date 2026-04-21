@@ -49,8 +49,10 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 WIFI_SCAN_INTERVAL = 6   # seconds  (mutable at runtime via set_interval)
 
 app = Flask(__name__, static_folder=STATIC_DIR)
-app.config["SECRET_KEY"] = "combined-viz-secret"
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+app.config["SECRET_KEY"] = os.environ.get("SPECTRE_SECRET", os.urandom(32).hex())
+_API_TOKEN = os.environ.get("SPECTRE_TOKEN", "")  # optional: set to require CLI auth
+_CORS_ORIGIN = os.environ.get("SPECTRE_ORIGIN", "http://localhost:5003")
+socketio = SocketIO(app, cors_allowed_origins=_CORS_ORIGIN, async_mode="threading")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SHARED STATE
@@ -107,13 +109,19 @@ def _add_alert(kind, name, detail):
     socketio.emit("alert", al)
 
 
+_SAFE_NOTIF = re.compile(r'[^\w\s\-\.\:\@\#\%\+\=\[\]\(\)\/]')
+
+def _sanitise_notif(s):
+    """Strip characters that could escape an osascript string literal."""
+    return _SAFE_NOTIF.sub('', str(s))[:80]
+
 def _notify_macos(title, subtitle, body):
     """Fire a native macOS notification via osascript."""
     try:
-        script = (
-            f'display notification "{body}" '
-            f'with title "{title}" subtitle "{subtitle}"'
-        )
+        t = _sanitise_notif(title)
+        s = _sanitise_notif(subtitle)
+        b = _sanitise_notif(body)
+        script = f'display notification "{b}" with title "{t}" subtitle "{s}"'
         subprocess.run(["osascript", "-e", script],
                        capture_output=True, timeout=3)
     except Exception:
@@ -367,7 +375,8 @@ def _pick_ble_adapter():
         chosen = usb[0][0] if usb else adapters[0][0]
         print(f"[BLE] Adapters found: {adapters}  →  using {chosen}")
         # Ensure adapter is up
-        subprocess.run(["sudo", "hciconfig", chosen, "up"], capture_output=True)
+        if re.fullmatch(r'hci\d+', chosen):
+            subprocess.run(["sudo", "hciconfig", chosen, "up"], capture_output=True)
         return chosen
     except Exception as e:
         print(f"[BLE] Adapter probe failed: {e}")
@@ -635,6 +644,10 @@ def api_status():
 def api_emit():
     """REST shim so the CLI can fire socket events without a full socket.io client."""
     from flask import request as flask_request
+    if _API_TOKEN:
+        auth = flask_request.headers.get("X-SPECTRE-Token", "")
+        if auth != _API_TOKEN:
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
     body  = flask_request.get_json(force=True) or {}
     event = body.get("event","")
     data  = body.get("data",{})
