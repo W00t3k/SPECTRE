@@ -603,6 +603,65 @@ def api_system_info():
     return jsonify(_get_system_info())
 
 
+_start_time = time.time()
+
+@app.route("/api/status")
+def api_status():
+    with _lock:
+        wifi  = list(_wifi_networks.values())
+        ble   = list(_ble_devices.values())
+    with _ev_lock:
+        events = list(_events)
+    with _al_lock:
+        alerts = list(_alerts)
+    uptime_s = int(time.time() - _start_time)
+    h, r = divmod(uptime_s, 3600); m, s = divmod(r, 60)
+    return jsonify({
+        "demo":           _demo_mode,
+        "wifi_count":     len(wifi),
+        "ble_count":      len(ble),
+        "event_count":    len(events),
+        "alert_count":    len(alerts),
+        "scan_interval":  WIFI_SCAN_INTERVAL,
+        "uptime":         f"{h:02d}:{m:02d}:{s:02d}",
+        "wifi":           wifi,
+        "ble":            ble,
+        "events":         events[-200:],
+        "alerts":         alerts[-50:],
+    })
+
+
+@app.route("/api/emit", methods=["POST"])
+def api_emit():
+    """REST shim so the CLI can fire socket events without a full socket.io client."""
+    from flask import request as flask_request
+    body  = flask_request.get_json(force=True) or {}
+    event = body.get("event","")
+    data  = body.get("data",{})
+    handlers = {
+        "toggle_demo":     on_toggle_demo,
+        "inject_demo_ble": on_inject_demo_ble,
+        "inject_demo_wifi":on_inject_demo_wifi,
+        "clear_ble":       on_clear_ble,
+        "clear_events":    on_clear_events,
+        "clear_alerts":    on_clear_alerts,
+    }
+    if event == "set_interval":
+        global WIFI_SCAN_INTERVAL
+        try:
+            v = int(data.get("interval", 6))
+            WIFI_SCAN_INTERVAL = max(2, min(60, v))
+        except Exception:
+            pass
+        _emit_all()
+        return jsonify({"ok": True, "interval": WIFI_SCAN_INTERVAL})
+    fn = handlers.get(event)
+    if fn:
+        fn()
+        return jsonify({"ok": True, "event": event})
+    return jsonify({"ok": False, "error": f"Unknown event: {event}"}), 400
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # SOCKETIO EVENTS
 # ═══════════════════════════════════════════════════════════════════════════

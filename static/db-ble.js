@@ -313,15 +313,15 @@ function bleDetail(frames,dev){
       const wifiCol=f.wifi_on?'var(--green)':'var(--dim)';
       let row='';
       if(st) row+=`<span style="font-weight:bold;color:var(--white)">${si} ${esc(st)}</span> `;
-      if(ios) row+=chip(ios,'',ios.includes('26')||ios.includes('25')||ios.includes('24')?'var(--cyan)':'var(--blue)');
+      if(ios) row+=chip('iOS',ios,ios.includes('26')||ios.includes('25')||ios.includes('24')?'var(--cyan)':'var(--blue)');
       row+=`<span style="font-size:.5rem;color:${wifiCol};margin-left:3px">WiFi${f.wifi_on?'✓':'✗'}</span>`;
       if(f.airdrop_status!==undefined) row+=chip('AirDrop',f.airdrop_status?'on':'off','var(--mag)');
       lines.push(row);
     } else if(f.type_id===0x0f){
       const act=f.action||'';
       lines.push(`<span style="color:var(--yellow)">⚡</span> <b>${esc(act||'Nearby Action')}</b>`+
-        (f.device_class?` ${chip(f.device_class,'','var(--blue)')}`:'')+
-        (f.os_version?` ${chip(f.os_version,'','var(--cyan)')}`:'')+
+        (f.device_class?` ${chip('device',f.device_class,'var(--blue)')}`:'')+ 
+        (f.os_version?` ${chip('os',f.os_version,'var(--cyan)')}`:'')+ 
         (f.wifi_on!==undefined?`<span style="font-size:.5rem;color:${f.wifi_on?'var(--green)':'var(--dim)'};margin-left:3px">WiFi${f.wifi_on?'✓':'✗'}</span>`:''));
     } else if(f.type_id===0x07){
       const cs=colorSwatch(f.color);
@@ -344,7 +344,7 @@ function bleDetail(frames,dev){
     } else if(f.type_id===0x0d||f.type_id===0x0e){
       const lbl=f.type_id===0x0d?'Hotspot':'Tethering';
       lines.push(`<span style="color:var(--orange)">📶 ${lbl}</span>`+
-        (f.network_type?` ${chip(f.network_type,'','var(--orange)')}`:'')+
+        (f.network_type?` ${chip('network',f.network_type,'var(--orange)')}`:'')+
         (f.battery!=null?` ${chip('🔋',f.battery+'%','var(--green)')}`:'')+
         (f.display_on!==undefined?` <span style="font-size:.5rem;color:var(--dim)">scr:${f.display_on?'on':'off'}</span>`:''));
     } else if(f.type_id===0x06){
@@ -354,10 +354,10 @@ function bleDetail(frames,dev){
       lines.push(`<span style="color:var(--dim)">⌚ ${stateIcon(ws)||''} ${esc(ws||'Magic Switch')}</span>`);
     } else if(f.type_id===0x08){
       lines.push(`<span style="color:var(--cyan)">🎤 Siri</span>`+
-        (f.device_type?` ${chip(f.device_type,'','var(--cyan)')}`:'')+
-        (f.os_version?` ${chip(f.os_version,'','var(--blue)')}`:'')+
-        (f.battery!=null?` ${chip('🔋',f.battery+'%','var(--green)')}`:'')+
-        (f.active!==undefined?` <span style="font-size:.5rem;color:${f.active?'var(--cyan)':'var(--dim)'}">siri:${f.active?'active':'off'}</span>`:''));
+        (f.device_type?` ${chip('device',f.device_type,'var(--cyan)')}`:'')+ 
+        (f.os_version?` ${chip('os',f.os_version,'var(--blue)')}`:'')+ 
+        (f.battery!=null?` ${chip('🔋',f.battery+'%','var(--green)')}`:'')+ 
+        (f.active!==undefined?` <span style="font-size:.5rem;color:${f.active?'var(--cyan)':'var(--dim)'}">siri:${f.active?'active':'off'}</span>`:'')); 
     } else if(f.type_id===0x12){
       lines.push(`<span style="color:var(--red)">📍 Find My</span>`+
         (f.status?` <span style="font-size:.54rem;color:var(--dim)">${esc(f.status)}</span>`:''));
@@ -370,14 +370,17 @@ function bleDetail(frames,dev){
 
 function bleBatBars(frames){
   const ap=(frames||[]).find(f=>f.type_id===0x07);if(!ap)return'';
-  const L=ap.left_bat*10, R=ap.right_bat*10, C=ap.case_bat*10;
+  const L=ap.left_bat!=null?ap.left_bat*10:null;
+  const R=ap.right_bat!=null?ap.right_bat*10:null;
+  const C=ap.case_bat!=null?ap.case_bat*10:null;
   const bc=v=>v>60?'var(--green)':v>30?'var(--yellow)':'var(--red)';
   const chg=v=>v?'⚡':'';
-  return `<div class="bat-row">
-    <span class="bat-label">L${chg(ap.left_charging)}</span><div class="bat-bar"><div class="bat-fill" style="width:${L}%;background:${bc(L)}"></div></div><span class="bat-pct">${L}%</span>
-    <span class="bat-label">R${chg(ap.right_charging)}</span><div class="bat-bar"><div class="bat-fill" style="width:${R}%;background:${bc(R)}"></div></div><span class="bat-pct">${R}%</span>
-    <span class="bat-label">🗃${chg(ap.case_charging)}</span><div class="bat-bar"><div class="bat-fill" style="width:${C}%;background:${bc(C)}"></div></div><span class="bat-pct">${C}%</span>
-  </div>`;
+  const bar=(lbl,charging,pct)=>pct!=null
+    ?`<span class="bat-label">${lbl}${chg(charging)}</span><div class="bat-bar"><div class="bat-fill" style="width:${pct}%;background:${bc(pct)}"></div></div><span class="bat-pct">${pct}%</span>`
+    :'';
+  const rows=[bar('L',ap.left_charging,L),bar('R',ap.right_charging,R),bar('🗃',ap.case_charging,C)].filter(Boolean);
+  if(!rows.length)return'';
+  return `<div class="bat-row">${rows.join('')}</div>`;
 }
 
 function renderBleGridInner(sorted){
@@ -394,22 +397,24 @@ function renderBleGridInner(sorted){
     card.className=`dev-card ${tc}${dev.addr===selectedBle?' sel':''}${isLost?' lost-dev':''}`;card.style.opacity=isLost?'0.42':'1';
     const lostBadge=isLost?'<span class="ctag tr2" style="animation:alertp .8s infinite">LOST</span>':'';
     const modelName=bleModelName(dev.frames);
+    const detail=bleDetail(dev.frames,dev);
+    const ob=ownerBadge(dev.addr);
     card.innerHTML=`
-      <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div>
+      <div class="card-header">
+        <div class="card-title-wrap">
           <div class="cn">${esc(dev.name)}${isLost?' 👻':''}</div>
           ${modelName?`<div class="cn-model">▸ ${esc(modelName)}</div>`:''}
+          ${ob?`<div style="margin-top:2px">${ob}</div>`:''}
         </div>
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px">
-          <div style="font-size:.7rem;font-weight:bold;color:${rssiColor(dev.rssi)}">${dev.rssi}dBm</div>
-          <button class="lbl-btn" onclick="event.stopPropagation();openLabelModal('${dev.addr}')">👤 label</button>
+        <div class="card-rssi-wrap">
+          <div class="card-rssi" style="color:${rssiColor(dev.rssi)}">${dev.rssi}<span style="font-size:.5rem">dBm</span></div>
+          <button class="lbl-btn" onclick="event.stopPropagation();openLabelModal('${dev.addr}')">👤</button>
         </div>
       </div>
-      ${ownerBadge(dev.addr)?`<div style="margin-bottom:3px">${ownerBadge(dev.addr)}</div>`:''}
       <div class="ca">${esc(dev.addr)}</div>
       <div class="ctags">${bleTags(dev.frames)}${lostBadge}</div>
       ${bleBatBars(dev.frames)}
-      <div class="cd">${bleDetail(dev.frames,dev)}</div>
+      ${detail?`<div class="cd">${detail}</div>`:''}
       <div class="cts">Frames:${dev.frame_count||0} · ${elapsed(dev.last_seen)}</div>`;
   }
   for(const[addr,el]of Object.entries(existing))if(!seen.has(addr))grid.removeChild(el);

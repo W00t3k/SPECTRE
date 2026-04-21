@@ -65,9 +65,15 @@ if [[ "$OS" == "Linux" ]]; then
 fi
 
 # ── Launch ──────────────────────────────────────────────────
-echo "═══════════════════════════════════════"
-echo " Starting RF Dashboard on port $PORT"
-echo " Open: http://localhost:$PORT"
-echo "═══════════════════════════════════════"
+echo "═══════════════════════════════════════════════════════════"
+echo "  👻 SPECTRE — Signal & Protocol Exploitation, Capture,"
+echo "               Tracking, Recon Engine"
+echo ""
+echo "  Dashboard  →  http://localhost:$PORT"
+echo "  CLI help   →  python spectre.py --help"
+echo "  Quick cmds →  python spectre.py wifi"
+echo "               python spectre.py ble"
+echo "               python spectre.py status"
+echo "═══════════════════════════════════════════════════════════"
 
 exec "$PYTHON" combined_server.py

@@ -168,7 +168,11 @@ tr.sel td{background:rgba(0,255,200,.09);border-left:2px solid var(--cyan);}
 .t-ap::before{background:var(--blue);}.t-ad::before{background:var(--mag);}
 .t-hf::before{background:var(--green);}.t-hs::before{background:var(--orange);}
 .t-fm::before{background:var(--red);}.t-xx::before{background:var(--dim);}
-.cn{font-size:.82rem;font-weight:bold;color:var(--white);letter-spacing:.03em;}
+.card-header{display:flex;justify-content:space-between;align-items:flex-start;gap:6px;margin-bottom:3px;}
+.card-title-wrap{flex:1;min-width:0;}
+.card-rssi-wrap{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;}
+.card-rssi{font-size:.82rem;font-weight:bold;letter-spacing:.02em;line-height:1;}
+.cn{font-size:.78rem;font-weight:bold;color:var(--white);letter-spacing:.04em;}
 .cn-model{font-size:.66rem;color:var(--cyan);margin-bottom:1px;font-weight:normal;}
 .ca{font-size:.54rem;color:var(--dim);margin:0 0 4px;}
 .ctags{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:4px;}
