@@ -25,7 +25,7 @@ import random
 import platform
 from flask import Flask, send_from_directory, jsonify, Response
 from flask_socketio import SocketIO, emit
-from apple_ble_tables import (
+from core.apple_ble_tables import (
     APPLE_MFR, MSG_TYPES, NEARBY_ACTIONS, NEARBY_INFO_ACTIONS, PHONE_STATES,
     AIRPODS_MODELS, AIRPODS_STATUS, AIRPODS_COLORS, HOMEKIT_CATEGORY,
     SIRI_DEVICE, DEVICE_CLASS, MAGIC_SW_WRIST, HOTSPOT_NET, IOS_VERSION,

@@ -80,7 +80,7 @@ if [[ "$OS" == "Linux" ]]; then
 fi
 
 echo "[*] Running regression tests..."
-"$PYTHON" test_ble.py
+"$PYTHON" core/test_ble.py
 
 echo ""
 echo "═══════════════════════════════════════"

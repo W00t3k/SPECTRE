@@ -25,7 +25,7 @@ fi
 
 # ── Regression tests ────────────────────────────────────────
 echo "[*] Running regression tests..."
-if ! "$PYTHON" test_ble.py; then
+if ! "$PYTHON" core/test_ble.py; then
     echo "[!] Tests failed — aborting launch. Fix errors first."
     exit 1
 fi

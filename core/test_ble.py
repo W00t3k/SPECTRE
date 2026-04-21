@@ -2,17 +2,18 @@
 """
 Regression test suite — combined_server.py + ble_continuity_scanner.py
 Covers hexway/apple_bleee + furiousMAC/continuity lookup tables.
-Run:  .venv/bin/python test_ble.py
+Run:  .venv/bin/python core/test_ble.py
 Exit: 0 = all pass, 1 = failures
 """
 import sys, re, time
-sys.path.insert(0, ".")
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import unittest.mock as mock
 for _m in ("bleak","bleak.backends","bleak.backends.device","bleak.backends.scanner"):
     sys.modules.setdefault(_m, mock.MagicMock())
 
-from apple_ble_tables import (
+from core.apple_ble_tables import (
     decode_continuity,
     AIRPODS_MODELS, NEARBY_ACTIONS, NEARBY_INFO_ACTIONS, IOS_VERSION,
     MSG_TYPES, AIRPODS_STATUS, AIRPODS_COLORS, HOMEKIT_CATEGORY,
