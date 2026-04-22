@@ -13,23 +13,36 @@
 <!-- TOPBAR -->
 <div id="topbar">
   <div id="title"><span style="color:var(--mag)">👻</span> SPECTRE</div>
+  <div class="tb-sep"></div>
   <div class="badge bg" id="status-b">● CONNECTING</div>
   <div class="badge bc" id="wifi-b">WiFi: 0</div>
   <div class="badge bb" id="ble-b">BLE: 0</div>
   <div class="badge br" id="alert-b" style="display:none">⚠ OPEN</div>
-  <div class="badge bm" id="mode-b">DEMO</div>
+  <div class="badge bm" id="mode-b">LIVE</div>
   <div id="sp"></div>
+  <!-- scan controls -->
   <button class="tbtn" onclick="socket.emit('request_wifi_scan')" title="Trigger WiFi scan now">↻ SCAN</button>
-  <button class="tbtn" onclick="socket.emit('clear_ble')" title="Clear BLE device list">✕ BLE</button>
-  <button class="tbtn" onclick="socket.emit('clear_events')" title="Clear event log">✕ LOG</button>
+  <input id="interval-slider" type="range" min="2" max="60" value="6" style="width:54px;accent-color:var(--cyan);vertical-align:middle" oninput="setScanInterval(this.value)" title="WiFi scan interval">
+  <span style="font-size:.55rem;color:var(--dim);min-width:20px" id="interval-val">6s</span>
+  <div class="tb-sep"></div>
+  <!-- clear group -->
+  <button class="tbtn" onclick="socket.emit('clear_ble')" title="Clear BLE list">✕ BLE</button>
   <button class="tbtn" onclick="clearAlerts()" title="Clear alerts">✕ ALERTS</button>
-  <button class="tbtn" onclick="injectDemoBle()" title="Load demo BLE devices">🧪 DEMO BLE</button>
-  <button class="tbtn" onclick="toggleDemo()" title="Toggle demo/live mode">⚡ DEMO</button>
+  <div class="tb-sep"></div>
+  <!-- notifications + mute -->
   <button class="tbtn" id="mute-btn" onclick="toggleMute()" title="Mute/unmute macOS notifications">🔔 NOTIF</button>
-  <span class="tbtn" style="cursor:default;border-color:var(--dim);color:var(--dim)">SCAN <span id="interval-val">6s</span></span>
-  <input id="interval-slider" type="range" min="2" max="60" value="6" style="width:60px;accent-color:var(--cyan)" oninput="setScanInterval(this.value)" title="WiFi scan interval">
-  <button class="tbtn" onclick="resetLayout()" title="Reset panel positions">⊞ RESET</button>
-  <button class="tbtn" onclick="toggleThemePicker()" title="Switch theme">🎨 THEME</button>
+  <div class="tb-sep"></div>
+  <!-- debug group (collapsed by default) -->
+  <button class="tbtn tb-dim" onclick="toggleDbgBar()" title="Debug tools">⚙</button>
+  <div id="dbg-bar" style="display:none;gap:5px;align-items:center">
+    <button class="tbtn tb-dim" onclick="injectDemoBle()">BLE+</button>
+    <button class="tbtn tb-dim" onclick="injectDemoWifi()">WiFi+</button>
+    <button class="tbtn tb-dim" onclick="toggleDemo()">⚡ DEMO</button>
+    <button class="tbtn tb-dim" onclick="socket.emit('clear_events')">✕ LOG</button>
+  </div>
+  <div class="tb-sep"></div>
+  <button class="tbtn" onclick="resetLayout()" title="Reset panel layout">⊞</button>
+  <button class="tbtn" onclick="toggleThemePicker()" title="Switch theme">🎨</button>
   <div id="clock" class="badge bd">--:--:--</div>
 </div>
 
@@ -186,6 +199,12 @@
   <div class="panel" id="sys-usb-panel">
     <div class="ptitle"><div class="dot" style="background:var(--mag);box-shadow:0 0 7px var(--mag)"></div>USB DEVICES</div>
     <div class="scroll"><div id="sys-usb"><div class="no-sel">Loading…</div></div></div>
+  </div>
+  <div class="panel" id="sys-battery-panel">
+    <div class="ptitle"><div class="dot" style="background:var(--yellow);box-shadow:0 0 7px var(--yellow)"></div>BATTERY
+      <span style="margin-left:auto"><button class="tbtn" onclick="loadSystemInfo()">↻</button></span>
+    </div>
+    <div id="sys-battery"><div class="no-sel">Reading…</div></div>
   </div>
 </div>
 

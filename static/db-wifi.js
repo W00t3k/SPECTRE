@@ -111,61 +111,162 @@ rc.addEventListener('click',e=>{
   const W=rc.width,H=rc.height,cx=W/2,cy=H/2,R=Math.min(cx,cy)-12;
   let best=null,bestD=999;
   for(const net of Object.values(wifiNets)){
-    const a=((net.bssid.split(':').reduce((s,v)=>s+parseInt(v,16),0))%360+360)%360;
-    const dn=Math.max(.1,Math.min(.92,(net.rssi+100)/70)),dist=R*(1-dn+.08);
+    const a=_bssidAngle(net.bssid);
+    const dn=Math.max(.08,Math.min(.95,(net.rssi+100)/70)),dist=R*(1-dn+.05);
     const bx=cx+dist*Math.cos((a-90)*Math.PI/180),by=cy+dist*Math.sin((a-90)*Math.PI/180);
     const d=Math.hypot(mx-bx,my-by);if(d<bestD){bestD=d;best=net;}
   }
   if(best&&bestD<22)inspectWifi(best.bssid);
 });
 
+// Stable per-BSSID angle using all 6 octets with prime mixing for good spread
+function _bssidAngle(bssid){
+  const parts=bssid.split(':');
+  let h=0;
+  const primes=[31,37,41,43,47,53];
+  for(let i=0;i<parts.length;i++) h=(h*primes[i%primes.length]+parseInt(parts[i]||'0',16))>>>0;
+  return(h%360+360)%360;
+}
+
 function drawRadar(){
-  const W=rc.width,H=rc.height,cx=W/2,cy=H/2,R=Math.min(cx,cy)-12,now=performance.now();
-  rctx.clearRect(0,0,W,H);rctx.fillStyle='#05050f';rctx.fillRect(0,0,W,H);
+  const W=rc.width,H=rc.height,cx=W/2,cy=H/2,R=Math.min(cx,cy)-14,now=performance.now();
+  rctx.clearRect(0,0,W,H);
+
+  // Deep space background gradient
+  const bg=rctx.createRadialGradient(cx,cy,0,cx,cy,R*1.1);
+  bg.addColorStop(0,'#07101f');bg.addColorStop(1,'#020810');
+  rctx.fillStyle=bg;rctx.fillRect(0,0,W,H);
+
+  // Range rings with dBm labels
+  const dbmLabels={1:'-85dBm',2:'-70dBm',3:'-55dBm',4:'-40dBm'};
   for(let i=1;i<=4;i++){
     rctx.beginPath();rctx.arc(cx,cy,R*i/4,0,Math.PI*2);
-    rctx.strokeStyle=i===4?'#0e1f30':'#091520';rctx.lineWidth=i===4?1.5:1;rctx.stroke();
-    rctx.font='7px Courier New';rctx.fillStyle='#253545';
-    rctx.fillText(`${-90+15*i}`,cx+R*i/4+2,cy-2);
+    const alpha=i===4?0.35:0.15;
+    rctx.strokeStyle=`rgba(0,220,180,${alpha})`;rctx.lineWidth=i===4?1.2:0.7;rctx.stroke();
+    rctx.font='7px Courier New';rctx.fillStyle='rgba(0,200,160,0.35)';rctx.textAlign='left';
+    rctx.fillText(dbmLabels[i],cx+R*i/4+3,cy-3);
   }
-  rctx.setLineDash([3,8]);rctx.strokeStyle='#091520';rctx.lineWidth=1;
-  for(let a=0;a<360;a+=45){const r=a*Math.PI/180;rctx.beginPath();rctx.moveTo(cx,cy);rctx.lineTo(cx+Math.cos(r)*R,cy+Math.sin(r)*R);rctx.stroke();}
+
+  // Spoke lines
+  rctx.setLineDash([2,10]);rctx.strokeStyle='rgba(0,180,140,0.12)';rctx.lineWidth=0.8;
+  for(let a=0;a<360;a+=30){
+    const r=a*Math.PI/180;
+    rctx.beginPath();rctx.moveTo(cx,cy);rctx.lineTo(cx+Math.cos(r)*R,cy+Math.sin(r)*R);rctx.stroke();
+  }
   rctx.setLineDash([]);
-  for(let i=60;i>=0;i--){
-    const a=(radarAngle-i*2)*Math.PI/180,prev=(radarAngle-(i+1)*2)*Math.PI/180;
+
+  // Sweep trail — brighter, more dramatic
+  for(let i=70;i>=0;i--){
+    const a=(radarAngle-i*2.2)*Math.PI/180,prev=(radarAngle-(i+1)*2.2)*Math.PI/180;
     rctx.beginPath();rctx.moveTo(cx,cy);rctx.arc(cx,cy,R,prev-Math.PI/2,a-Math.PI/2);
-    rctx.closePath();rctx.fillStyle=`rgba(0,255,200,${Math.pow(1-i/60,1.6)*.4})`;rctx.fill();
+    rctx.closePath();
+    const t=Math.pow(1-i/70,2);
+    rctx.fillStyle=`rgba(0,255,200,${t*0.38})`;rctx.fill();
   }
+
+  // Ripples
   for(let i=ripples.length-1;i>=0;i--){
-    const rip=ripples[i];rip.r+=1.5;rip.alpha*=0.91;
+    const rip=ripples[i];rip.r+=1.8;rip.alpha*=0.90;
     if(rip.alpha<0.02){ripples.splice(i,1);continue;}
     rctx.beginPath();rctx.arc(rip.bx,rip.by,rip.r,0,Math.PI*2);
-    rctx.strokeStyle=`${rip.col},${rip.alpha})`;rctx.lineWidth=1.2;rctx.stroke();
+    rctx.strokeStyle=`${rip.col},${rip.alpha})`;rctx.lineWidth=1.5;rctx.stroke();
   }
-  for(const net of Object.values(wifiNets)){
-    const ad=((net.bssid.split(':').reduce((s,v)=>s+parseInt(v,16),0))%360+360)%360;
-    const dn=Math.max(.1,Math.min(.92,(net.rssi+100)/70)),dist=R*(1-dn+.08);
-    const brad=(ad-90)*Math.PI/180,bx=cx+dist*Math.cos(brad),by=cy+dist*Math.sin(brad);
+
+  // --- Compute dot positions then do label collision resolution ---
+  const nets=Object.values(wifiNets);
+  const dotData=nets.map(net=>{
+    const ad=_bssidAngle(net.bssid);
+    const dn=Math.max(.08,Math.min(.95,(net.rssi+100)/70));
+    const dist=R*(1-dn+.05);
+    const brad=(ad-90)*Math.PI/180;
+    return {net,ad,bx:cx+dist*Math.cos(brad),by:cy+dist*Math.sin(brad)};
+  });
+
+  // Draw dots + rings first (below labels)
+  for(const {net,ad,bx,by} of dotData){
     const isOpen=net.security==='Open'||net.security==='--'||net.security==='NONE';
     const isSel=net.bssid===selectedWifi;
-    const diff=Math.abs(((radarAngle-ad)%360+360)%360);
-    if(diff<12){
-      if(diff<2)ripples.push({bx,by,r:5,alpha:.7,col:isOpen?'rgba(255,0,150,':'rgba(0,255,136,'});
+    const diff=((radarAngle-ad)%360+360)%360;
+
+    // Sweep hit → ripple
+    if(diff<3) ripples.push({bx,by,r:4,alpha:.75,col:isOpen?'rgba(255,50,150,':'rgba(0,255,136,'});
+
+    // Open network — pulsing danger ring
+    if(isOpen){
+      rctx.beginPath();rctx.arc(bx,by,13,0,Math.PI*2);
+      rctx.strokeStyle=`rgba(255,30,120,${.45+.25*Math.sin(now/280)})`;
+      rctx.lineWidth=2;rctx.shadowColor='#ff1e78';rctx.shadowBlur=12;rctx.stroke();rctx.shadowBlur=0;
     }
-    if(isOpen){rctx.beginPath();rctx.arc(bx,by,10,0,Math.PI*2);rctx.strokeStyle=`rgba(255,0,150,${.3+.2*Math.sin(now/350)})`;rctx.lineWidth=1.5;rctx.stroke();}
-    if(isSel){rctx.beginPath();rctx.arc(bx,by,12,0,Math.PI*2);rctx.strokeStyle=`rgba(0,255,200,${.5+.3*Math.sin(now/180)})`;rctx.lineWidth=2;rctx.stroke();}
-    const col=rssiColor(net.rssi),pr=isSel?5+1.5*Math.sin(now/200):4;
-    rctx.beginPath();rctx.arc(bx,by,pr,0,Math.PI*2);rctx.fillStyle=col;rctx.shadowColor=col;rctx.shadowBlur=isSel?16:8;rctx.fill();rctx.shadowBlur=0;
-    const lbl=net.ssid.length>12?net.ssid.slice(0,11)+'…':net.ssid;
-    rctx.font=(isSel?'bold ':'')+`8px Courier New`;rctx.fillStyle='rgba(255,255,255,.72)';
-    rctx.shadowColor='#000';rctx.shadowBlur=3;rctx.fillText(lbl,bx+8,by-5);rctx.shadowBlur=0;
+    // Selected ring
+    if(isSel){
+      rctx.beginPath();rctx.arc(bx,by,15,0,Math.PI*2);
+      rctx.strokeStyle=`rgba(0,255,200,${.7+.3*Math.sin(now/160)})`;
+      rctx.lineWidth=2.5;rctx.shadowColor='#00ffc8';rctx.shadowBlur=18;rctx.stroke();rctx.shadowBlur=0;
+    }
+    const col=rssiColor(net.rssi);
+    const pr=isSel?6+1.5*Math.sin(now/200):4.5;
+    rctx.beginPath();rctx.arc(bx,by,pr,0,Math.PI*2);
+    rctx.fillStyle=col;rctx.shadowColor=col;rctx.shadowBlur=isSel?20:10;rctx.fill();rctx.shadowBlur=0;
   }
+
+  // --- Label collision resolution ---
+  // Candidate label positions: right, left, above, below, diagonals
+  const OFFSETS=[[10,-6],[-10,-6],[0,-14],[0,10],[10,8],[-10,8]];
+  const placed=[]; // {x1,y1,x2,y2} bounding boxes
+
+  function overlaps(x,y,w,h){
+    for(const b of placed){
+      if(x<b.x2+2&&x+w>b.x1-2&&y<b.y2+2&&y+h>b.y1-2)return true;
+    }
+    return false;
+  }
+
+  rctx.font='9px "Courier New"';
+  for(const {net,bx,by} of dotData){
+    const isSel=net.bssid===selectedWifi;
+    const lbl=(net.ssid&&net.ssid!=='<hidden>')?
+      (net.ssid.length>14?net.ssid.slice(0,13)+'…':net.ssid):'<hidden>';
+    const tw=rctx.measureText(lbl).width;
+    const th=10;
+    let placed_=false;
+    for(const [ox,oy] of OFFSETS){
+      const lx=bx+ox,ly=by+oy;
+      if(!overlaps(lx,ly,tw,th)){
+        placed.push({x1:lx,y1:ly-th,x2:lx+tw,y2:ly});
+        // connector line from dot to label if offset is large
+        if(Math.hypot(ox,oy)>12){
+          rctx.beginPath();rctx.moveTo(bx,by);rctx.lineTo(lx,ly-4);
+          rctx.strokeStyle='rgba(255,255,255,0.15)';rctx.lineWidth=0.7;rctx.stroke();
+        }
+        rctx.font=(isSel?'bold ':'')+'9px "Courier New"';
+        const alpha=isSel?1.0:0.82;
+        rctx.fillStyle=isSel?`rgba(0,255,200,${alpha})`:`rgba(220,240,255,${alpha})`;
+        rctx.shadowColor='#000';rctx.shadowBlur=4;
+        rctx.fillText(lbl,lx,ly);
+        rctx.shadowBlur=0;
+        placed_=true;break;
+      }
+    }
+    // fallback — still draw if all slots taken, dimmer
+    if(!placed_){
+      rctx.font='8px "Courier New"';
+      rctx.fillStyle='rgba(180,200,220,0.45)';
+      rctx.shadowColor='#000';rctx.shadowBlur=3;
+      rctx.fillText(lbl,bx+10,by-5);rctx.shadowBlur=0;
+    }
+  }
+  rctx.textAlign='left';
+
+  // Sweep line — bright gradient
   const sa=(radarAngle-90)*Math.PI/180;
-  rctx.beginPath();rctx.moveTo(cx,cy);rctx.lineTo(cx+Math.cos(sa)*R,cy+Math.sin(sa)*R);
   const g=rctx.createLinearGradient(cx,cy,cx+Math.cos(sa)*R,cy+Math.sin(sa)*R);
-  g.addColorStop(0,'rgba(0,255,200,.1)');g.addColorStop(1,'rgba(0,255,200,.95)');
-  rctx.strokeStyle=g;rctx.lineWidth=2;rctx.shadowColor='#00ffc8';rctx.shadowBlur=7;rctx.stroke();rctx.shadowBlur=0;
-  rctx.beginPath();rctx.arc(cx,cy,4,0,Math.PI*2);rctx.fillStyle='#00ffc8';rctx.shadowColor='#00ffc8';rctx.shadowBlur=10;rctx.fill();rctx.shadowBlur=0;
+  g.addColorStop(0,'rgba(0,255,200,.05)');g.addColorStop(0.6,'rgba(0,255,200,.6)');g.addColorStop(1,'rgba(0,255,200,1)');
+  rctx.beginPath();rctx.moveTo(cx,cy);rctx.lineTo(cx+Math.cos(sa)*R,cy+Math.sin(sa)*R);
+  rctx.strokeStyle=g;rctx.lineWidth=2.5;rctx.shadowColor='#00ffc8';rctx.shadowBlur=10;rctx.stroke();rctx.shadowBlur=0;
+
+  // Centre hub
+  rctx.beginPath();rctx.arc(cx,cy,5,0,Math.PI*2);
+  rctx.fillStyle='#00ffc8';rctx.shadowColor='#00ffc8';rctx.shadowBlur=14;rctx.fill();rctx.shadowBlur=0;
 }
 
 // ══════════════════════════════════════════════════════

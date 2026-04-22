@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # run.sh — zero-interaction launcher for macOS and Raspberry Pi
-# Usage: bash run.sh [--port 5003] [--test-only]
+# Usage: bash run.sh [--port 5003] [--test-only] [--skip-tests]
 set -euo pipefail
 
 PORT=5003
 TEST_ONLY=0
+SKIP_TESTS=0
 
-for arg in "$@"; do
-    case "$arg" in
-        --port) shift; PORT="$1" ;;
-        --test-only) TEST_ONLY=1 ;;
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --port)       PORT="$2"; shift 2 ;;
+        --test-only)  TEST_ONLY=1; shift ;;
+        --skip-tests) SKIP_TESTS=1; shift ;;
+        *) echo "[!] Unknown flag: $1"; shift ;;
     esac
 done
 
@@ -24,10 +27,15 @@ if [[ ! -f "$PYTHON" ]]; then
 fi
 
 # ── Regression tests ────────────────────────────────────────
-echo "[*] Running regression tests..."
-if ! "$PYTHON" core/test_ble.py; then
-    echo "[!] Tests failed — aborting launch. Fix errors first."
-    exit 1
+if [[ "$SKIP_TESTS" -eq 0 ]]; then
+    echo "[*] Running regression tests..."
+    if ! "$PYTHON" core/test_ble.py; then
+        echo "[!] Tests failed — aborting launch. Fix errors first."
+        echo "[!] Use --skip-tests to bypass (not recommended)."
+        exit 1
+    fi
+else
+    echo "[*] Skipping regression tests (--skip-tests)."
 fi
 
 if [[ "$TEST_ONLY" -eq 1 ]]; then
@@ -66,7 +74,7 @@ fi
 
 # ── Launch ──────────────────────────────────────────────────
 echo "═══════════════════════════════════════════════════════════"
-echo "  👻 SPECTRE — Signal & Protocol Exploitation, Capture,"
+echo "  SPECTRE — Signal & Protocol Exploitation, Capture,"
 echo "               Tracking, Recon Engine"
 echo ""
 echo "  Dashboard  →  http://localhost:$PORT"
@@ -76,4 +84,4 @@ echo "               python spectre.py ble"
 echo "               python spectre.py status"
 echo "═══════════════════════════════════════════════════════════"
 
-exec "$PYTHON" combined_server.py
+exec "$PYTHON" combined_server.py --port "$PORT"

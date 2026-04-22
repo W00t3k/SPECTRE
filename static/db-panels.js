@@ -90,9 +90,10 @@ const DEFAULT_LAYOUTS={
     'export-panel':     {lx:.5,    ly:0,    lw:.5,   lh:1},
   },
   'tab-system':{
-    'sys-meta-panel':   {lx:0,     ly:0,    lw:.28,  lh:1},
-    'sys-ifaces-panel': {lx:.28,   ly:0,    lw:.38,  lh:.5},
-    'sys-usb-panel':    {lx:.28,   ly:.5,   lw:.38,  lh:.5},
+    'sys-meta-panel':    {lx:0,     ly:0,    lw:.28,  lh:.6},
+    'sys-battery-panel': {lx:0,     ly:.6,   lw:.28,  lh:.4},
+    'sys-ifaces-panel':  {lx:.28,   ly:0,    lw:.38,  lh:.5},
+    'sys-usb-panel':     {lx:.28,   ly:.5,   lw:.38,  lh:.5},
   },
 };
 function _viewportWH(){

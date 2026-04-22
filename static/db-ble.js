@@ -125,23 +125,27 @@ function renderBleTable(sorted){
   const tbody=$('ble-tbody');tbody.innerHTML='';
   for(const dev of sorted){
     const isLost=!!dev.lost;
-    const tc=bleCardClass(dev.frames);
-    const [cls]=TYPE_MAP[(dev.frames||[])[0]?.type_id]||['td2'];
-    const model=bleModelName(dev.frames);
-    const det=bleDetailText(dev.frames);
+    const dn=bleDisplayName(dev);
+    const enumerable=dn.name!==null;
+    const displayName=dn.name||'UNNAMED';
+    const model=!dn.derived?bleModelName(dev.frames):'';
+    const det=enumerable?bleDetailText(dev.frames):'';
     const tr=document.createElement('tr');
     tr.className=(dev.addr===selectedBle?'sel':'')+(isLost?' lost-dev':'');
-    tr.style.opacity=isLost?'0.42':'';
-    tr.onclick=()=>inspectBle(dev.addr);
+    tr.style.opacity=!enumerable?'0.28':isLost?'0.42':'';
+    tr.style.cursor=enumerable?'pointer':'default';
+    tr.style.filter=enumerable?'':'grayscale(70%)';
+    tr.onclick=enumerable?()=>inspectBle(dev.addr):null;
+    const nameStyle=dn.derived?'color:var(--dim);font-style:italic':(!enumerable?'color:rgba(255,255,255,0.2)':'');
     tr.innerHTML=`
       <td>
-        <div class="bt-name">${esc(dev.name)}${isLost?' 👻':''}</div>
+        <div class="bt-name" style="${nameStyle}">${esc(displayName)}${isLost?' 👻':''}</div>
         ${model?`<div class="bt-model">▸ ${esc(model)}</div>`:''}
         ${ownerBadge(dev.addr)}
-        <div class="bt-addr">${esc(dev.addr)}</div>
+        <div class="bt-addr" style="${!enumerable?'opacity:.3':''}">${esc(dev.addr)}</div>
       </td>
       <td><div class="ctags">${bleTags(dev.frames)}</div></td>
-      <td style="color:${rssiColor(dev.rssi)};font-weight:bold;white-space:nowrap">${dev.rssi} dBm</td>
+      <td style="color:${enumerable?rssiColor(dev.rssi):'rgba(255,255,255,0.2)'};font-weight:bold;white-space:nowrap">${dev.rssi} dBm</td>
       <td class="bt-detail">${det}</td>
       <td style="color:var(--dim);font-size:.55rem;white-space:nowrap">${elapsed(dev.last_seen)}</td>`;
     tbody.appendChild(tr);
@@ -153,18 +157,25 @@ function renderBleCompact(sorted){
   const wrap=$('ble-compact');wrap.innerHTML='';
   for(const dev of sorted){
     const isLost=!!dev.lost;
+    const dn=bleDisplayName(dev);
+    const enumerable=dn.name!==null;
+    const displayName=dn.name||'UNNAMED';
+    const model=!dn.derived?bleModelName(dev.frames):'';
     const row=document.createElement('div');
     row.className='bc-row'+(dev.addr===selectedBle?' sel':'')+(isLost?' lost-dev':'');
-    row.onclick=()=>inspectBle(dev.addr);
-    const dotCol=rssiColor(dev.rssi);
-    const model=bleModelName(dev.frames);
+    row.style.opacity=!enumerable?'0.28':isLost?'0.42':'';
+    row.style.cursor=enumerable?'pointer':'default';
+    row.style.filter=enumerable?'':'grayscale(70%)';
+    row.onclick=enumerable?()=>inspectBle(dev.addr):null;
+    const dotCol=enumerable?rssiColor(dev.rssi):'rgba(255,255,255,0.15)';
+    const nameStyle=dn.derived?'color:var(--dim);font-style:italic':(!enumerable?'color:rgba(255,255,255,0.2)':'');
     row.innerHTML=`
       <div style="display:flex;align-items:center;justify-content:center">
         <div class="bc-dot" style="background:${dotCol};box-shadow:0 0 5px ${dotCol}"></div>
       </div>
       <div style="overflow:hidden">
-        <div class="bc-name">${esc(dev.name)}${model?' <span style="color:var(--cyan);font-weight:normal;font-size:.56rem">▸ '+esc(model)+'</span>':''} ${ownerBadge(dev.addr)}</div>
-        <div style="font-size:.5rem;color:var(--dim)">${esc(dev.addr)}</div>
+        <div class="bc-name" style="${nameStyle}">${esc(displayName)}${model?' <span style="color:var(--cyan);font-weight:normal;font-size:.56rem">▸ '+esc(model)+'</span>':''} ${ownerBadge(dev.addr)}</div>
+        <div style="font-size:.5rem;color:var(--dim);${!enumerable?'opacity:.3':''}">${esc(dev.addr)}</div>
       </div>
       <div class="bc-tags">${bleTags(dev.frames)}</div>
       <div class="bc-rssi" style="color:${dotCol}">${dev.rssi}</div>
@@ -298,6 +309,58 @@ function bleModelName(frames){
   return '';
 }
 
+// Best-effort display name from ALL frame data — never returns empty
+function bleDisplayName(dev){
+  const n=dev.name||'';
+  // Already has a real name (not just generic fallback from server)
+  const GENERIC=['Apple Device','Unknown'];
+  if(n && !GENERIC.includes(n)) return {name:n,derived:false};
+  // Try to derive from frames
+  for(const f of (dev.frames||[])){
+    if(f.type_id===0x07){
+      const m=f.model&&!f.model.startsWith('0x')?f.model:'AirPods';
+      return {name:m,derived:true};
+    }
+    if(f.type_id===0x08&&f.device_type)
+      return {name:f.device_type,derived:true};
+    if(f.type_id===0x0f){
+      const a=f.action?`Action: ${f.action}`:'Nearby Action';
+      const dc=f.device_class?` (${f.device_class})`:''
+      return {name:a+dc,derived:true};
+    }
+    if(f.type_id===0x10){
+      const ios=f.ios_version?` ${f.ios_version}`:'';
+      const st=f.phone_state||f.activity||'';
+      return {name:`iPhone/iPad${ios}${st?' · '+st:''}`,derived:true};
+    }
+    if(f.type_id===0x05) return {name:'AirDrop Device',derived:true};
+    if(f.type_id===0x0c) return {name:'Handoff (Apple)',derived:true};
+    if(f.type_id===0x0d){
+      const nt=f.network_type||'Hotspot';
+      return {name:`Hotspot · ${nt}`,derived:true};
+    }
+    if(f.type_id===0x0e) return {name:'iPhone Tethering',derived:true};
+    if(f.type_id===0x06){
+      const cat=f.category||'HomeKit';
+      return {name:`HomeKit · ${cat}`,derived:true};
+    }
+    if(f.type_id===0x0b) return {name:'Magic Switch',derived:true};
+    if(f.type_id===0x12){
+      const st=f.status||'';
+      return {name:`Find My${st?' · '+st:''}`,derived:true};
+    }
+    if(f.type_id===0x09) return {name:'AirPlay Target',derived:true};
+    if(f.type_id===0x0a) return {name:'AirPlay Source',derived:true};
+  }
+  // Nothing useful — truly unknown
+  return {name:null,derived:false};
+}
+
+// A device is enumerable if we can derive any name for it
+function _isEnumerable(dev){
+  return bleDisplayName(dev).name !== null;
+}
+
 function chip(label,val,col){
   if(!val&&val!==0)return'';
   return`<span style="display:inline-block;margin:1px 2px 1px 0;padding:1px 5px;border-radius:10px;font-size:.5rem;letter-spacing:.04em;border:1px solid ${col||'var(--dim)'};color:${col||'var(--text)'};background:${col||'var(--dim)'}18">${esc(label)}${val!==true?': '+esc(String(val)):''}</span>`;
@@ -383,6 +446,22 @@ function bleBatBars(frames){
   return `<div class="bat-row">${rows.join('')}</div>`;
 }
 
+function _pairedBatRow(pb){
+  if(!pb||!Object.keys(pb).length)return'';
+  const bc=v=>v>60?'var(--green)':v>30?'var(--yellow)':'var(--red)';
+  const bar=(lbl,pct)=>pct!=null
+    ?`<span class="bat-label">${lbl}</span><div class="bat-bar"><div class="bat-fill" style="width:${pct}%;background:${bc(pct)}"></div></div><span class="bat-pct">${pct}%</span>`
+    :'';
+  const rows=[
+    pb.left!=null?bar('L',pb.left):'',
+    pb.right!=null?bar('R',pb.right):'',
+    pb.case!=null?bar('🗃',pb.case):'',
+    pb.main!=null?bar('🔋',pb.main):'',
+  ].filter(Boolean);
+  if(!rows.length)return'';
+  return`<div class="bat-row" style="opacity:.8">${rows.join('')}</div>`;
+}
+
 function renderBleGridInner(sorted){
   const grid=$('ble-grid');
   const existing={};for(const el of grid.children)existing[el.dataset.addr]=el;
@@ -390,30 +469,41 @@ function renderBleGridInner(sorted){
   for(const dev of sorted){
     seen.add(dev.addr);
     const tc=bleCardClass(dev.frames);
+    const dn=bleDisplayName(dev);
+    const enumerable=dn.name!==null;
     let card=existing[dev.addr];
     if(!card){card=document.createElement('div');card.dataset.addr=dev.addr;
-      card.onclick=()=>inspectBle(dev.addr);card.classList.add('card-new');grid.appendChild(card);}
+      card.classList.add('card-new');grid.appendChild(card);}
+    // Only wire onclick if we have enough info to show a detail panel
+    card.onclick=enumerable?()=>inspectBle(dev.addr):null;
     const isLost=!!dev.lost;
-    card.className=`dev-card ${tc}${dev.addr===selectedBle?' sel':''}${isLost?' lost-dev':''}`;card.style.opacity=isLost?'0.42':'1';
+    const opacity=!enumerable?'0.28':isLost?'0.42':'1';
+    card.className=`dev-card ${tc}${dev.addr===selectedBle?' sel':''}${isLost?' lost-dev':''}${!enumerable?' dev-ghost':''}`;
+    card.style.opacity=opacity;
+    card.style.cursor=enumerable?'pointer':'default';
+    card.style.filter=enumerable?'':'grayscale(80%)';
     const lostBadge=isLost?'<span class="ctag tr2" style="animation:alertp .8s infinite">LOST</span>':'';
-    const modelName=bleModelName(dev.frames);
-    const detail=bleDetail(dev.frames,dev);
+    const displayName=dn.name||'UNNAMED';
+    const nameStyle=dn.derived?'color:var(--dim);font-style:italic':(!enumerable?'color:rgba(255,255,255,0.2)':'');
+    const modelName=!dn.derived?bleModelName(dev.frames):'';
+    const detail=enumerable?bleDetail(dev.frames,dev):'';
     const ob=ownerBadge(dev.addr);
     card.innerHTML=`
       <div class="card-header">
         <div class="card-title-wrap">
-          <div class="cn">${esc(dev.name)}${isLost?' 👻':''}</div>
+          <div class="cn" style="${nameStyle}">${esc(displayName)}${isLost?' 👻':''}${!enumerable?' <span style="font-size:.5rem;color:rgba(255,255,255,0.18);font-style:normal">UNNAMED</span>':''}</div>
           ${modelName?`<div class="cn-model">▸ ${esc(modelName)}</div>`:''}
           ${ob?`<div style="margin-top:2px">${ob}</div>`:''}
         </div>
         <div class="card-rssi-wrap">
-          <div class="card-rssi" style="color:${rssiColor(dev.rssi)}">${dev.rssi}<span style="font-size:.5rem">dBm</span></div>
-          <button class="lbl-btn" onclick="event.stopPropagation();openLabelModal('${dev.addr}')">👤</button>
+          <div class="card-rssi" style="color:${enumerable?rssiColor(dev.rssi):'rgba(255,255,255,0.2)'}">${dev.rssi}<span style="font-size:.5rem">dBm</span></div>
+          ${enumerable?`<button class="lbl-btn" onclick="event.stopPropagation();openLabelModal('${dev.addr}')">👤</button>`:''}
         </div>
       </div>
-      <div class="ca">${esc(dev.addr)}</div>
-      <div class="ctags">${bleTags(dev.frames)}${lostBadge}</div>
-      ${bleBatBars(dev.frames)}
+      <div class="ca" style="${!enumerable?'color:rgba(255,255,255,0.15)':''}">${esc(dev.addr)}${dev.vendor?` <span style="color:var(--dim);font-size:.48rem;margin-left:4px">${esc(dev.vendor.split(',')[0])}</span>`:''}</div>
+      <div class="ctags">${bleTags(dev.frames)}${lostBadge}${dev.vendor&&!dev.vendor.includes('Apple')?`<span class="ctag" style="border-color:var(--dim);color:var(--dim)">${esc(dev.vendor.split(',')[0].slice(0,16))}</span>`:''}</div>
+      ${enumerable?bleBatBars(dev.frames):''}
+      ${_pairedBatRow(dev.paired_battery)}
       ${detail?`<div class="cd">${detail}</div>`:''}
       <div class="cts">Frames:${dev.frame_count||0} · ${elapsed(dev.last_seen)}</div>`;
   }

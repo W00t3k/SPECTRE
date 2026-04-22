@@ -27,6 +27,7 @@ let wifiHistory={}, bleHistory={};
 let wSortKey='rssi', selectedWifi=null, selectedBle=null;
 let radarAngle=0, ripples=[];
 let actMap={};
+let _batteryData={mac:null,bt:[]};   // latest battery info from server
 
 // ══════════════════════════════════════════════════════
 // CLOCK
@@ -42,7 +43,14 @@ socket.on('connect',()=>{$('status-b').textContent='● LIVE';$('status-b').clas
   setTimeout(loadSystemInfo,300);
 });
 socket.on('disconnect',()=>{$('status-b').textContent='○ OFFLINE';$('status-b').className='badge bd';});
-socket.on('alert',al=>showToast(al));
+socket.on('alert',al=>{
+  // Only show toast for high-signal alerts — suppress generic re-appearance noise
+  const HIGH_KINDS=['🎯 AIRDROP DETECTED','🔴 HIGH-VALUE TARGET','📡 OPEN NETWORK'];
+  const isHigh=HIGH_KINDS.some(k=>al.kind&&al.kind.includes(k.replace(/[^ \w]/g,'').trim().split(' ')[0]))
+    || (al.kind&&al.kind.includes('HIGH-VALUE'))
+    || (al.detail&&al.detail.includes('HIGH'));
+  if(isHigh) showToast(al);
+});
 socket.on('interval_ack',d=>{const el=$('interval-val');if(el)el.textContent=d.interval+'s';});
 socket.on('mute_state',d=>{
   const btn=$('mute-btn');
@@ -56,6 +64,7 @@ socket.on('update',data=>{
   bleHistory=data.ble_history||{};
   allEvents=data.events||[];
   allAlerts=data.alerts||[];
+  if(data.battery){_batteryData=data.battery;renderBatteryWidget();}
   for(const d of (data.ble||[])) for(const f of (d.frames||[]))
     if(f.type_id===0x10&&f.activity){actMap[f.activity]=(actMap[f.activity]||0)+1;}
   $('wifi-b').textContent=`WiFi: ${Object.keys(wifiNets).length}`;
@@ -142,6 +151,89 @@ function renderSysInfo(){
   const iel=$('sys-interval');if(iel)iel.textContent=d.wifi_scan_interval+'s';
   const slid=$('interval-slider');if(slid)slid.value=d.wifi_scan_interval;
   const iv=$('interval-val');if(iv)iv.textContent=d.wifi_scan_interval+'s';
+  if(d.battery){_batteryData=d.battery;renderBatteryWidget();}
+}
+
+// ── Battery Widget ─────────────────────────────────────
+function _ringColor(pct){
+  if(pct===null||pct===undefined)return'var(--dim)';
+  if(pct>50)return'var(--cyan)';
+  if(pct>20)return'var(--yellow)';
+  return'var(--red)';
+}
+function _drawRing(ctx,cx,cy,r,pct,color,label,sublabel,charging){
+  const TAU=Math.PI*2,START=-Math.PI/2;
+  ctx.clearRect(cx-r-14,cy-r-14,r*2+28,r*2+48);
+  // track
+  ctx.beginPath();ctx.arc(cx,cy,r,0,TAU);
+  ctx.strokeStyle='rgba(255,255,255,0.08)';ctx.lineWidth=6;ctx.stroke();
+  // fill
+  if(pct!==null&&pct!==undefined){
+    ctx.beginPath();ctx.arc(cx,cy,r,START,START+(TAU*(pct/100)));
+    ctx.strokeStyle=color;ctx.lineWidth=7;
+    ctx.shadowColor=color;ctx.shadowBlur=10;
+    ctx.stroke();ctx.shadowBlur=0;
+  }
+  // icon area — % text
+  ctx.fillStyle=pct===null?'rgba(255,255,255,0.25)':color;
+  ctx.font='bold 13px Courier New';
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(pct===null?'?':pct+'%',cx,cy+(charging?-6:0));
+  if(charging){
+    ctx.fillStyle='var(--yellow)';ctx.font='11px serif';
+    ctx.fillText('⚡',cx,cy+8);
+  }
+  // label below ring
+  ctx.fillStyle='rgba(255,255,255,0.45)';ctx.font='9px Courier New';
+  ctx.fillText(label,cx,cy+r+12);
+  if(sublabel){
+    ctx.fillStyle='rgba(255,255,255,0.25)';
+    ctx.fillText(sublabel,cx,cy+r+23);
+  }
+}
+function renderBatteryWidget(){
+  const el=$('sys-battery');if(!el)return;
+  // Build list of items: MacBook + ioreg BT + AirPods from live BLE
+  const items=[];
+  const mac=_batteryData.mac;
+  if(mac)items.push({label:'MacBook',sub:mac.source||'',pct:mac.pct,charging:mac.charging});
+  // ioreg BT devices
+  for(const b of (_batteryData.bt||[])){
+    items.push({label:b.name.slice(0,14),sub:'',pct:b.pct,charging:false});
+  }
+  // AirPods from live BLE scan (more granular — L/R/Case)
+  for(const d of Object.values(bleDevs)){
+    for(const f of (d.frames||[])){
+      if(f.type_id===0x07){
+        const L=f.left_bat!=null?Math.round(f.left_bat/15*100):null;
+        const R=f.right_bat!=null?Math.round(f.right_bat/15*100):null;
+        const C=f.case_bat!=null?Math.round(f.case_bat/15*100):null;
+        const model=(f.model||d.name||'AirPods').slice(0,12);
+        if(L!==null)items.push({label:'L',sub:model,pct:L,charging:f.left_charging||false,ble:true});
+        if(R!==null)items.push({label:'R',sub:model,pct:R,charging:f.right_charging||false,ble:true});
+        if(C!==null)items.push({label:'Case',sub:model,pct:C,charging:f.case_charging||false,ble:true});
+      }
+    }
+  }
+  if(!items.length){
+    el.innerHTML='<div style="color:var(--dim);font-size:.6rem;padding:14px 12px">No battery data available.<br>Connect to AC or pair Bluetooth devices.</div>';
+    return;
+  }
+  const SZ=78,PAD=10,COLS=Math.max(1,Math.floor((el.clientWidth-PAD)/(SZ+PAD)));
+  const ROWS=Math.ceil(items.length/COLS);
+  const W=el.clientWidth||300,H=Math.max(140,(SZ+50)*ROWS+PAD*2);
+  el.innerHTML='';
+  const cv=document.createElement('canvas');cv.width=W;cv.height=H;
+  cv.style.cssText='display:block;width:100%;height:'+H+'px';
+  el.appendChild(cv);
+  const ctx=cv.getContext('2d');
+  const R=SZ/2-6;
+  items.forEach((it,i)=>{
+    const col=i%COLS,row=Math.floor(i/COLS);
+    const cx=PAD+col*(SZ+PAD)+SZ/2;
+    const cy=PAD+row*(SZ+50)+SZ/2;
+    _drawRing(ctx,cx,cy,R,it.pct,_ringColor(it.pct),it.label,it.sub,it.charging);
+  });
 }
 
 // ══════════════════════════════════════════════════════
@@ -182,10 +274,18 @@ function renderAlerts(){
     list.appendChild(d);
   }
 }
+let _dbgOpen=false;
+function toggleDbgBar(){
+  _dbgOpen=!_dbgOpen;
+  const bar=$('dbg-bar');
+  if(bar){bar.style.display=_dbgOpen?'flex':'none';}
+  const btn=document.querySelector('button[onclick="toggleDbgBar()"]');
+  if(btn)btn.style.color=_dbgOpen?'var(--yellow)':'var(--dim)';
+}
 function showToast(al){
   const el=document.createElement('div');el.className='toast-item';
   el.innerHTML=`<div class="tk">${esc(al.kind)}</div><div>${esc(al.name)}: ${esc(al.detail)}</div>`;
-  $('toast').appendChild(el);setTimeout(()=>el.remove(),6000);
+  $('toast').appendChild(el);setTimeout(()=>el.remove(),5000);
 }
 
 // ══════════════════════════════════════════════════════

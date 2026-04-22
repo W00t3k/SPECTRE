@@ -12,6 +12,7 @@ Run:  .venv/bin/python combined_server.py
 Dashboard: http://localhost:5003
 """
 
+import argparse
 import asyncio
 import threading
 import subprocess
@@ -57,8 +58,97 @@ _CORS_ORIGIN = os.environ.get("SPECTRE_ORIGIN", "*")  # lock down with SPECTRE_O
 socketio = SocketIO(app, cors_allowed_origins=_CORS_ORIGIN, async_mode="threading")
 
 # ═══════════════════════════════════════════════════════════════════════════
-# SHARED STATE
+# DEVICE ENRICHMENT  — paired device DB + OUI vendor lookup
 # ═══════════════════════════════════════════════════════════════════════════
+
+_paired_db: dict = {}   # normalised MAC → {"name":str, "type":str, "battery":{...}}
+_oui_db: dict    = {}   # upper-6-hex-prefix → vendor string  e.g. "AABBCC" → "Apple, Inc."
+
+def _load_paired_devices() -> dict:
+    """Read macOS system_profiler SPBluetoothDataType and return MAC→info map."""
+    if not IS_MACOS:
+        return {}
+    try:
+        import plistlib
+        raw = subprocess.check_output(
+            ["system_profiler", "SPBluetoothDataType", "-xml"],
+            timeout=10, stderr=subprocess.DEVNULL
+        )
+        data = plistlib.loads(raw)
+        result = {}
+        items = data[0].get("_items", [data[0]]) if data else []
+        for item in items:
+            for section_key in ("device_connected", "device_not_connected"):
+                for entry in item.get(section_key, []):
+                    for name, info in entry.items():
+                        addr = info.get("device_address", "")
+                        if not addr:
+                            continue
+                        norm = addr.upper().replace("-", ":")
+                        battery = {}
+                        for bk, label in [("device_batteryLevelLeft","left"),
+                                          ("device_batteryLevelRight","right"),
+                                          ("device_batteryLevelCase","case"),
+                                          ("device_batteryLevel","main")]:
+                            if bk in info:
+                                try:
+                                    battery[label] = int(info[bk].strip().rstrip("%"))
+                                except Exception:
+                                    pass
+                        result[norm] = {
+                            "name":    name,
+                            "type":    info.get("device_minorType", ""),
+                            "battery": battery,
+                            "product": info.get("device_productID", ""),
+                            "vendor":  info.get("device_vendorID", ""),
+                        }
+        return result
+    except Exception as e:
+        print(f"[BT-DB] paired device load failed: {e}")
+        return {}
+
+def _load_oui_db() -> dict:
+    """Load IEEE OUI file if present; download a compact version if not."""
+    oui_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "oui.txt")
+    if not os.path.exists(oui_path):
+        try:
+            import urllib.request
+            print("[OUI] Downloading IEEE OUI database (~4MB)…")
+            urllib.request.urlretrieve(
+                "https://standards-oui.ieee.org/oui/oui.txt", oui_path
+            )
+            print("[OUI] Download complete.")
+        except Exception as e:
+            print(f"[OUI] Download failed: {e}")
+            return {}
+    result = {}
+    try:
+        with open(oui_path, "r", errors="ignore") as f:
+            for line in f:
+                if "(hex)" in line:
+                    parts = line.split("(hex)")
+                    prefix = parts[0].strip().replace("-", "").upper()
+                    vendor = parts[1].strip() if len(parts) > 1 else ""
+                    if prefix and vendor:
+                        result[prefix] = vendor
+        print(f"[OUI] Loaded {len(result):,} vendor prefixes.")
+    except Exception as e:
+        print(f"[OUI] Parse failed: {e}")
+    return result
+
+def _enrich_ble_addr(addr: str) -> dict:
+    """Return enrichment dict for a BLE address: paired name, vendor, battery."""
+    norm = addr.upper().replace("-", ":")
+    paired = _paired_db.get(norm, {})
+    prefix = norm.replace(":", "")[:6]
+    vendor = _oui_db.get(prefix, "")
+    return {
+        "paired_name":    paired.get("name", ""),
+        "paired_type":    paired.get("type", ""),
+        "paired_battery": paired.get("battery", {}),
+        "vendor":         paired.get("vendor", "") or vendor,
+    }
+
 _lock          = threading.Lock()   # guards _wifi_networks, _ble_devices, _wifi_history, _ble_history
 _ev_lock       = threading.Lock()   # guards _events (separate to avoid deadlock)
 _al_lock       = threading.Lock()   # guards _alerts
@@ -71,6 +161,7 @@ _ble_history   = {}   # addr  → [(ts, rssi), ...]
 _demo_mode     = False
 _correlator    = DeviceCorrelator()
 _notif_muted   = False   # mute macOS notifications via GUI or CLI
+_battery_cache = {"mac": None, "bt": [], "ts": 0}   # refreshed every 30s
 
 MAX_HISTORY = 60   # samples per device
 
@@ -101,15 +192,17 @@ def _add_event(evtype, source, name, detail="", rssi=None):
     return ev
 
 
-def _add_alert(kind, name, detail):
-    """Thread-safe. Never call while holding _lock."""
+def _add_alert(kind, name, detail, notify=True):
+    """Thread-safe. Never call while holding _lock.
+    notify=False: log to panel + emit socket but skip macOS system notification.
+    """
     al = {"ts": time.strftime("%H:%M:%S"), "kind": kind, "name": name, "detail": detail}
     with _al_lock:
         _alerts.insert(0, al)
         while len(_alerts) > 50:
             _alerts.pop()
-    # Notify and emit outside any lock
-    _notify_macos(kind, name, detail)
+    if notify:
+        _notify_macos(kind, name, detail)
     socketio.emit("alert", al)
 
 
@@ -134,6 +227,18 @@ def _notify_macos(title, subtitle, body):
         pass
 
 
+def _battery_poller():
+    """Background thread — refreshes battery cache every 30s."""
+    while True:
+        try:
+            info = _get_battery_info()
+            _battery_cache.update(info)
+            _battery_cache["ts"] = time.time()
+        except Exception:
+            pass
+        time.sleep(30)
+
+
 def _emit_all():
     with _lock:
         wifi = list(_wifi_networks.values())
@@ -151,6 +256,7 @@ def _emit_all():
         "alerts":       als,
         "wifi_history": wh,
         "ble_history":  bh,
+        "battery":      dict(_battery_cache),
         "ts":           time.strftime("%H:%M:%S"),
         "demo":         _demo_mode,
     })
@@ -314,6 +420,18 @@ def _on_ble_adv(device: BLEDevice, adv: AdvertisementData):
                 if len(entry["bat_history"]) > 60:
                     entry["bat_history"].pop(0)
 
+        # Enrich with paired device name + OUI vendor
+        enrichment = _enrich_ble_addr(addr)
+        if enrichment["paired_name"]:
+            entry["name"] = enrichment["paired_name"]
+            name = entry["name"]
+        if enrichment["vendor"] and not entry.get("vendor"):
+            entry["vendor"] = enrichment["vendor"]
+        if enrichment["paired_type"] and not entry.get("device_type"):
+            entry["device_type"] = enrichment["paired_type"]
+        if enrichment["paired_battery"]:
+            entry["paired_battery"] = enrichment["paired_battery"]
+
         _ble_devices[addr] = entry
 
     # Identity engine — runs outside _lock
@@ -334,9 +452,11 @@ def _on_ble_adv(device: BLEDevice, adv: AdvertisementData):
         _GENERIC = {"Find My Accessory","Apple Device","Handoff","AirDrop",
                     "Nearby Action","iPhone Tethering","iPhone Hotspot"}
         if identity["is_return"] and (identity["threat"] != "LOW" or name not in _GENERIC):
+            # Only fire macOS notif for HIGH threat — log MEDIUM/LOW silently to panel
             _add_alert("👁 KNOWN DEVICE RETURNED",
                        name,
-                       f"Seen {identity['seen_count']}x  •  Threat: {identity['threat']}")
+                       f"Seen {identity['seen_count']}x  •  Threat: {identity['threat']}",
+                       notify=(identity["threat"] == "HIGH"))
         for f in frames:
             if f["type_id"] == 0x05:
                 hashes = identity.get("hashes", [])
@@ -442,6 +562,64 @@ def _ble_thread():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# BATTERY INFO
+# ═══════════════════════════════════════════════════════════════════════════
+def _get_battery_info() -> dict:
+    """
+    Read battery state for:
+      - This Mac (via pmset -g batt)
+      - Connected Bluetooth devices (via ioreg -r -k BatteryPercent)
+    Returns dict:
+      {
+        "mac":  {"pct": 91, "charging": True, "source": "AC Power"},
+        "bt":   [{"name": "AirPods Pro", "pct": 100}, ...]
+      }
+    Falls back to None values if commands unavailable (Linux/no battery).
+    """
+    result = {"mac": None, "bt": []}
+
+    # ── Mac internal battery via pmset ──────────────────────────────────
+    if IS_MACOS:
+        try:
+            raw = subprocess.check_output(
+                ["pmset", "-g", "batt"], text=True, timeout=4
+            )
+            # e.g. "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=...) 91%; discharging; ..."
+            pct_m = re.search(r'(\d{1,3})%', raw)
+            charging = "charging" in raw.lower() or "AC Power" in raw
+            source_m = re.search(r"Now drawing from '(.+?)'", raw)
+            result["mac"] = {
+                "pct":      int(pct_m.group(1)) if pct_m else None,
+                "charging": charging,
+                "source":   source_m.group(1) if source_m else "Unknown",
+            }
+        except Exception:
+            result["mac"] = {"pct": None, "charging": False, "source": "N/A"}
+
+        # ── BT devices via ioreg ─────────────────────────────────────────
+        try:
+            raw = subprocess.check_output(
+                ["ioreg", "-r", "-k", "BatteryPercent", "-l"],
+                text=True, timeout=6
+            )
+            # Each block has "Product" and "BatteryPercent"
+            blocks = re.split(r'\+-o ', raw)
+            for block in blocks:
+                pct_m  = re.search(r'"BatteryPercent"\s*=\s*(\d+)', block)
+                name_m = re.search(r'"Product"\s*=\s*"([^"]+)"', block)
+                if pct_m:
+                    name = name_m.group(1) if name_m else "Unknown Device"
+                    result["bt"].append({
+                        "name": name,
+                        "pct":  int(pct_m.group(1)),
+                    })
+        except Exception:
+            pass
+
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # SYSTEM INFO
 # ═══════════════════════════════════════════════════════════════════════════
 def _get_system_info():
@@ -500,6 +678,7 @@ def _get_system_info():
     info["interfaces"] = net_ifaces
     info["wifi_scan_interval"] = WIFI_SCAN_INTERVAL
     info["demo_mode"] = _demo_mode
+    info["battery"] = _get_battery_info()
     return info
 
 
@@ -854,8 +1033,27 @@ def on_toggle_demo():
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
+    _ap = argparse.ArgumentParser()
+    _ap.add_argument("--port", type=int, default=5003)
+    _ap.add_argument("--host", default="0.0.0.0")
+    _args = _ap.parse_args()
+    _PORT = _args.port
+    _HOST = _args.host
+
+    # Load enrichment DBs (fast — runs in main thread before any scanning)
+    _paired_db.update(_load_paired_devices())
+    print(f"[BT-DB] {len(_paired_db)} paired devices loaded.")
+    def _oui_loader():
+        global _oui_db
+        _oui_db = _load_oui_db()
+    threading.Thread(target=_oui_loader, daemon=True).start()
+
     _load_demo_wifi()
     _load_demo_ble()
+
+    # Battery poller thread (polls pmset+ioreg every 30s)
+    batt_t = threading.Thread(target=_battery_poller, daemon=True)
+    batt_t.start()
 
     # WiFi scanner thread
     wt = threading.Thread(target=_wifi_scan_loop, daemon=True)
@@ -880,7 +1078,8 @@ if __name__ == "__main__":
     print("  ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝")
     print()
     print("  Signal • Protocol • Exploitation • Capture • Tracking • Recon • Engine")
-    print(f"  Dashboard → http://localhost:5003")
+    _display_host = "localhost" if _HOST == "0.0.0.0" else _HOST
+    print(f"  Dashboard → http://{_display_host}:{_PORT}")
     print()
-    socketio.run(app, host="0.0.0.0", port=5003,
+    socketio.run(app, host=_HOST, port=_PORT,
                  debug=False, allow_unsafe_werkzeug=True)

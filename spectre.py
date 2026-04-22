@@ -66,7 +66,7 @@ BANNER = f"""
 """
 
 DEFAULT_HOST = "localhost"
-DEFAULT_PORT = 5003
+DEFAULT_PORT = 8443 
 
 
 # ─── HTTP helpers ─────────────────────────────────────────────────────────────
