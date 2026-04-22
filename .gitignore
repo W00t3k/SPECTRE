@@ -11,4 +11,5 @@ build/
 *.hccapx
 loot/
 handshakes/
-.env/
+.env/spectre_identities.db
+oui.txt
